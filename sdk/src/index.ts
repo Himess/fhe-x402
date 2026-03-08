@@ -9,6 +9,7 @@ export type {
   FhevmEncryptedInput,
   ResourceInfo,
   PaymentInfo,
+  NonceStore,
 } from "./types.js";
 
 export { FHE_SCHEME, POOL_ABI } from "./types.js";

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fheFetch, createFheFetch } from "../src/fheFetch.js";
+import { fheFetch, createFheFetch, fheFetchWithCallback } from "../src/fheFetch.js";
 import { FHE_SCHEME } from "../src/types.js";
 import type { FheFetchOptions, FhePaymentRequired } from "../src/types.js";
 
@@ -173,5 +173,62 @@ describe("createFheFetch", () => {
     const boundFetch = createFheFetch(createMockFetchOptions());
     const response = await boundFetch("https://api.example.com/data");
     expect(response.status).toBe(200);
+  });
+});
+
+describe("fheFetchWithCallback", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("should pass through non-402 without calling callback", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response("OK", { status: 200 })
+    );
+
+    const onPayment = vi.fn();
+    const response = await fheFetchWithCallback(
+      "https://api.example.com/data",
+      createMockFetchOptions(),
+      onPayment
+    );
+
+    expect(response.status).toBe(200);
+    expect(onPayment).not.toHaveBeenCalled();
+  });
+
+  it("should return 402 in dryRun without calling callback", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(create402Body()), { status: 402 })
+    );
+
+    const onPayment = vi.fn();
+    const options = { ...createMockFetchOptions(), dryRun: true };
+    const response = await fheFetchWithCallback(
+      "https://api.example.com/data",
+      options,
+      onPayment
+    );
+
+    expect(response.status).toBe(402);
+    expect(onPayment).not.toHaveBeenCalled();
+  });
+
+  it("should return original 402 when no scheme match, without callback", async () => {
+    const body = create402Body();
+    body.accepts[0].scheme = "wrong" as any;
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(body), { status: 402 })
+    );
+
+    const onPayment = vi.fn();
+    const response = await fheFetchWithCallback(
+      "https://api.example.com/data",
+      createMockFetchOptions(),
+      onPayment
+    );
+
+    expect(response.status).toBe(402);
+    expect(onPayment).not.toHaveBeenCalled();
   });
 });

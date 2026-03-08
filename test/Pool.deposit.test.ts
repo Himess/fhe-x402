@@ -128,4 +128,26 @@ describe("ConfidentialPaymentPool — Deposit", function () {
     // Bob has 0 USDC
     await expect(pool.connect(bob).deposit(1_000_000)).to.be.reverted;
   });
+
+  it("should revert when deposit amount < MIN_PROTOCOL_FEE", async function () {
+    // MIN_PROTOCOL_FEE = 10_000 (0.01 USDC)
+    await expect(
+      pool.connect(alice).deposit(5_000) // 0.005 USDC
+    ).to.be.revertedWithCustomError(pool, "AmountTooSmall");
+  });
+
+  it("should revert when deposit is exactly 1 (dust)", async function () {
+    await expect(
+      pool.connect(alice).deposit(1)
+    ).to.be.revertedWithCustomError(pool, "AmountTooSmall");
+  });
+
+  it("should accept deposit exactly at MIN_PROTOCOL_FEE", async function () {
+    // MIN_PROTOCOL_FEE = 10_000 → fee = 10_000, net = 0
+    await pool.connect(alice).deposit(10_000);
+
+    const encBal = await pool.balanceOf(alice.address);
+    const balance = await fhevm.userDecryptEuint(FhevmType.euint64, encBal, poolAddress, alice);
+    expect(balance).to.equal(0n); // all goes to fee
+  });
 });

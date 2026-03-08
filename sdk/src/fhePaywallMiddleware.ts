@@ -6,6 +6,7 @@ import type {
   FhePaymentRequired,
   FhePaywallConfig,
   PaymentInfo,
+  NonceStore,
 } from "./types.js";
 import { FHE_SCHEME } from "./types.js";
 
@@ -48,21 +49,29 @@ function checkRateLimit(ip: string, maxRequests: number = 60, windowMs: number =
 }
 
 // ============================================================================
-// Nonce tracking
+// Default in-memory nonce store
 // ============================================================================
 
-const usedNonces = new Set<string>();
-const MAX_NONCE_ENTRIES = 100_000;
+class InMemoryNonceStore implements NonceStore {
+  private nonces = new Set<string>();
+  private readonly maxEntries: number;
 
-function trackNonce(nonce: string): boolean {
-  if (usedNonces.has(nonce)) return false;
-  if (usedNonces.size >= MAX_NONCE_ENTRIES) {
-    // Evict oldest (set iteration order = insertion order)
-    const first = usedNonces.values().next().value;
-    if (first) usedNonces.delete(first);
+  constructor(maxEntries: number = 100_000) {
+    this.maxEntries = maxEntries;
   }
-  usedNonces.add(nonce);
-  return true;
+
+  check(nonce: string): boolean {
+    return !this.nonces.has(nonce);
+  }
+
+  add(nonce: string): void {
+    if (this.nonces.size >= this.maxEntries) {
+      // Evict oldest (Set iteration order = insertion order)
+      const first = this.nonces.values().next().value;
+      if (first) this.nonces.delete(first);
+    }
+    this.nonces.add(nonce);
+  }
 }
 
 // ============================================================================
@@ -100,11 +109,14 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
     throw new Error(`Invalid recipient address: ${config.recipientAddress}`);
   }
 
-  const network = `eip155:11155111`; // Ethereum Sepolia
+  const chainId = config.chainId ?? 11155111;
+  const network = `eip155:${chainId}`;
   const maxTimeout = config.maxTimeoutSeconds ?? 300;
   const maxRate = config.maxRateLimit ?? 60;
   const rateWindow = config.rateLimitWindowMs ?? 60000;
+  const minConfirmations = config.minConfirmations ?? 1;
   const provider = new JsonRpcProvider(config.rpcUrl);
+  const nonceStore: NonceStore = config.nonceStore ?? new InMemoryNonceStore();
 
   return async (req: Request, res: Response, next: NextFunction) => {
     // Rate limiting — use socket address to prevent X-Forwarded-For spoofing
@@ -123,7 +135,7 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
       const requirements: FhePaymentRequirements = {
         scheme: FHE_SCHEME,
         network,
-        chainId: 11155111,
+        chainId,
         price: String(config.price),
         asset: config.asset,
         poolAddress: config.poolAddress,
@@ -170,11 +182,19 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
       return;
     }
 
-    // Nonce replay prevention
-    if (!trackNonce(payload.nonce)) {
+    // Chain ID verification — reject payments from wrong chain
+    if (payload.chainId !== chainId) {
+      res.status(400).json({ error: `Chain ID mismatch: expected ${chainId}, got ${payload.chainId}` });
+      return;
+    }
+
+    // Nonce replay prevention (supports async external stores)
+    const isNewNonce = await nonceStore.check(payload.nonce);
+    if (!isNewNonce) {
       res.status(400).json({ error: "Nonce already used" });
       return;
     }
+    await nonceStore.add(payload.nonce);
 
     // ===== Verify on-chain event =====
     try {
@@ -182,6 +202,18 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
       if (!receipt || receipt.status === 0) {
         res.status(400).json({ error: "Transaction failed or not found" });
         return;
+      }
+
+      // Confirmation depth check
+      if (minConfirmations > 1) {
+        const currentBlock = await provider.getBlockNumber();
+        const confirmations = currentBlock - receipt.blockNumber + 1;
+        if (confirmations < minConfirmations) {
+          res.status(400).json({
+            error: `Insufficient confirmations: ${confirmations}/${minConfirmations}`,
+          });
+          return;
+        }
       }
 
       // Parse PaymentExecuted events from the receipt
@@ -196,7 +228,7 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
             parsed?.name === "PaymentExecuted" &&
             parsed.args[0].toLowerCase() === payload.from.toLowerCase() &&
             parsed.args[1].toLowerCase() === config.recipientAddress.toLowerCase() &&
-            BigInt(parsed.args[2]) <= BigInt(config.price) &&
+            BigInt(parsed.args[2]) >= BigInt(config.price) && // FIX C-1: minPrice must be >= required price
             parsed.args[3] === payload.nonce
           ) {
             verified = true;

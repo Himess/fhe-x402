@@ -43,9 +43,12 @@ export interface FhePaywallConfig {
   poolAddress: string;
   recipientAddress: string;
   rpcUrl: string;
+  chainId?: number; // default: 11155111 (Sepolia)
   maxTimeoutSeconds?: number;
   maxRateLimit?: number;
   rateLimitWindowMs?: number;
+  minConfirmations?: number; // minimum block confirmations (default: 1)
+  nonceStore?: NonceStore; // external nonce persistence (default: in-memory Set)
 }
 
 /** Resource info for 402 response */
@@ -93,6 +96,18 @@ export interface FhevmEncryptedInput {
   }>;
 }
 
+/**
+ * External nonce store interface for persistent nonce tracking.
+ * Implement this with Redis, a database, or any persistent storage
+ * to survive server restarts.
+ */
+export interface NonceStore {
+  /** Check if nonce exists. Returns true if nonce is NEW (not seen before). */
+  check(nonce: string): boolean | Promise<boolean>;
+  /** Mark nonce as used. */
+  add(nonce: string): void | Promise<void>;
+}
+
 // ============================================================================
 // Contract ABI (minimal)
 // ============================================================================
@@ -101,13 +116,16 @@ export const POOL_ABI = [
   "function deposit(uint64 amount) external",
   "function pay(address to, bytes32 encryptedAmount, bytes calldata inputProof, uint64 minPrice, bytes32 nonce) external",
   "function requestWithdraw(bytes32 encryptedAmount, bytes calldata inputProof) external",
+  "function cancelWithdraw() external",
   "function finalizeWithdraw(uint64 clearAmount, bytes calldata decryptionProof) external",
   "function requestBalance() external",
   "function balanceOf(address account) external view returns (bytes32)",
+  "function balanceSnapshotOf(address account) external view returns (bytes32)",
   "function usedNonces(bytes32 nonce) external view returns (bool)",
   "function isInitialized(address account) external view returns (bool)",
   "event Deposited(address indexed user, uint64 amount)",
   "event PaymentExecuted(address indexed from, address indexed to, uint64 minPrice, bytes32 nonce)",
   "event WithdrawRequested(address indexed user)",
+  "event WithdrawCancelled(address indexed user)",
   "event WithdrawFinalized(address indexed user, uint64 amount)",
 ] as const;

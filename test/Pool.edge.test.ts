@@ -62,9 +62,13 @@ describe("ConfidentialPaymentPool — Edge Cases", function () {
     it("should set correct treasury", async function () {
       expect(await pool.treasury()).to.equal(treasury.address);
     });
+
+    it("should initialize pendingOwner to zero", async function () {
+      expect(await pool.pendingOwner()).to.equal(ethers.ZeroAddress);
+    });
   });
 
-  describe("Admin", function () {
+  describe("Admin — setTreasury", function () {
     it("should allow owner to update treasury", async function () {
       await pool.connect(deployer).setTreasury(charlie.address);
       expect(await pool.treasury()).to.equal(charlie.address);
@@ -99,6 +103,102 @@ describe("ConfidentialPaymentPool — Edge Cases", function () {
       await expect(
         pool.connect(deployer).setTreasury(ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(pool, "ZeroAddress");
+    });
+  });
+
+  describe("Admin — transferOwnership (2-step)", function () {
+    it("should start ownership transfer", async function () {
+      await pool.connect(deployer).transferOwnership(alice.address);
+      expect(await pool.pendingOwner()).to.equal(alice.address);
+      // Owner should NOT change yet
+      expect(await pool.owner()).to.equal(deployer.address);
+    });
+
+    it("should emit OwnershipTransferStarted event", async function () {
+      const tx = await pool.connect(deployer).transferOwnership(alice.address);
+      const receipt = await tx.wait();
+
+      const event = receipt.logs.find((log: any) => {
+        try {
+          const parsed = pool.interface.parseLog({ topics: log.topics, data: log.data });
+          return parsed?.name === "OwnershipTransferStarted";
+        } catch {
+          return false;
+        }
+      });
+      expect(event).to.not.be.undefined;
+    });
+
+    it("should accept ownership transfer", async function () {
+      await pool.connect(deployer).transferOwnership(alice.address);
+      await pool.connect(alice).acceptOwnership();
+
+      expect(await pool.owner()).to.equal(alice.address);
+      expect(await pool.pendingOwner()).to.equal(ethers.ZeroAddress);
+    });
+
+    it("should emit OwnershipTransferred event on accept", async function () {
+      await pool.connect(deployer).transferOwnership(alice.address);
+      const tx = await pool.connect(alice).acceptOwnership();
+      const receipt = await tx.wait();
+
+      const event = receipt.logs.find((log: any) => {
+        try {
+          const parsed = pool.interface.parseLog({ topics: log.topics, data: log.data });
+          return parsed?.name === "OwnershipTransferred";
+        } catch {
+          return false;
+        }
+      });
+      expect(event).to.not.be.undefined;
+    });
+
+    it("should revert non-owner transferOwnership", async function () {
+      let reverted = false;
+      try {
+        await pool.connect(alice).transferOwnership(bob.address);
+      } catch {
+        reverted = true;
+      }
+      expect(reverted).to.equal(true);
+    });
+
+    it("should revert transferOwnership to zero address", async function () {
+      await expect(
+        pool.connect(deployer).transferOwnership(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(pool, "ZeroAddress");
+    });
+
+    it("should revert acceptOwnership from non-pending", async function () {
+      await pool.connect(deployer).transferOwnership(alice.address);
+      let reverted = false;
+      try {
+        await pool.connect(bob).acceptOwnership();
+      } catch {
+        reverted = true;
+      }
+      expect(reverted).to.equal(true);
+    });
+
+    it("should allow new owner to setTreasury after transfer", async function () {
+      await pool.connect(deployer).transferOwnership(alice.address);
+      await pool.connect(alice).acceptOwnership();
+
+      await pool.connect(alice).setTreasury(bob.address);
+      expect(await pool.treasury()).to.equal(bob.address);
+    });
+
+    it("should prevent old owner from setTreasury after transfer", async function () {
+      await pool.connect(deployer).transferOwnership(alice.address);
+      await pool.connect(alice).acceptOwnership();
+
+      let reverted = false;
+      try {
+        await pool.connect(deployer).setTreasury(charlie.address);
+      } catch {
+        reverted = true;
+      }
+      expect(reverted).to.equal(true);
     });
   });
 
@@ -172,14 +272,41 @@ describe("ConfidentialPaymentPool — Edge Cases", function () {
     });
   });
 
-  describe("Balance query", function () {
-    it("should allow balance query request", async function () {
+  describe("Balance query (snapshot)", function () {
+    it("should create balance snapshot on request", async function () {
       await usdc.mint(alice.address, 10_000_000n);
       await usdc.connect(alice).approve(poolAddress, 10_000_000n);
       await pool.connect(alice).deposit(10_000_000);
 
       await pool.connect(alice).requestBalance();
       expect(await pool.balanceQueryRequested(alice.address)).to.equal(true);
+
+      // Snapshot should exist
+      const snapshot = await pool.balanceSnapshotOf(alice.address);
+      expect(snapshot).to.not.equal(0n);
+    });
+
+    it("should not modify live balance on requestBalance", async function () {
+      await usdc.mint(alice.address, 10_000_000n);
+      await usdc.connect(alice).approve(poolAddress, 10_000_000n);
+      await pool.connect(alice).deposit(10_000_000);
+
+      const balBefore = await fhevm.userDecryptEuint(
+        FhevmType.euint64,
+        await pool.balanceOf(alice.address),
+        poolAddress,
+        alice
+      );
+
+      await pool.connect(alice).requestBalance();
+
+      const balAfter = await fhevm.userDecryptEuint(
+        FhevmType.euint64,
+        await pool.balanceOf(alice.address),
+        poolAddress,
+        alice
+      );
+      expect(balAfter).to.equal(balBefore);
     });
 
     it("should handle balance query for uninitialized user", async function () {
@@ -193,7 +320,7 @@ describe("ConfidentialPaymentPool — Edge Cases", function () {
     it("should handle self-payment", async function () {
       await usdc.mint(alice.address, 50_000_000n);
       await usdc.connect(alice).approve(poolAddress, 50_000_000n);
-      await pool.connect(alice).deposit(20_000_000); // net 19_990_000
+      await pool.connect(alice).deposit(20_000_000); // net 19_980_000
 
       const nonce = randomNonce();
       const input = fhevm.createEncryptedInput(poolAddress, alice.address);

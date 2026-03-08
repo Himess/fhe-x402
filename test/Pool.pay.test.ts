@@ -277,4 +277,62 @@ describe("ConfidentialPaymentPool — Pay", function () {
     const bobBal = await fhevm.userDecryptEuint(FhevmType.euint64, bobEnc, poolAddress, bob);
     expect(bobBal).to.equal(1_980_000n); // 2 * 990_000
   });
+
+  it("should revert when minPrice < MIN_PROTOCOL_FEE", async function () {
+    const nonce = randomNonce();
+    const input = fhevm.createEncryptedInput(poolAddress, alice.address);
+    input.add64(5_000n);
+    const encrypted = await input.encrypt();
+
+    await expect(
+      pool.connect(alice).pay(bob.address, encrypted.handles[0], encrypted.inputProof, 5_000, nonce)
+    ).to.be.revertedWithCustomError(pool, "MinPriceTooLow");
+  });
+
+  it("should revert when paying to treasury address", async function () {
+    const nonce = randomNonce();
+    const input = fhevm.createEncryptedInput(poolAddress, alice.address);
+    input.add64(1_000_000n);
+    const encrypted = await input.encrypt();
+
+    await expect(
+      pool.connect(alice).pay(treasury.address, encrypted.handles[0], encrypted.inputProof, 1_000_000, nonce)
+    ).to.be.revertedWithCustomError(pool, "InvalidRecipient");
+  });
+
+  it("should accept minPrice exactly at MIN_PROTOCOL_FEE", async function () {
+    const nonce = randomNonce();
+    const input = fhevm.createEncryptedInput(poolAddress, alice.address);
+    input.add64(10_000n); // exactly MIN_PROTOCOL_FEE
+    const encrypted = await input.encrypt();
+
+    // minPrice = 10_000, fee = 10_000, net = 0 → bob gets 0 but tx succeeds
+    await pool.connect(alice).pay(bob.address, encrypted.handles[0], encrypted.inputProof, 10_000, nonce);
+
+    const bobEnc = await pool.balanceOf(bob.address);
+    const bobBal = await fhevm.userDecryptEuint(FhevmType.euint64, bobEnc, poolAddress, bob);
+    expect(bobBal).to.equal(0n); // fee consumed entire amount
+  });
+
+  it("should emit PaymentExecuted even on silent failure", async function () {
+    // Bob has no funds → silent failure
+    const nonce = randomNonce();
+    const input = fhevm.createEncryptedInput(poolAddress, bob.address);
+    input.add64(1_000_000n);
+    const encrypted = await input.encrypt();
+
+    const tx = await pool.connect(bob).pay(alice.address, encrypted.handles[0], encrypted.inputProof, 1_000_000, nonce);
+    const receipt = await tx.wait();
+
+    const event = receipt.logs.find((log: any) => {
+      try {
+        const parsed = pool.interface.parseLog({ topics: log.topics, data: log.data });
+        return parsed?.name === "PaymentExecuted";
+      } catch {
+        return false;
+      }
+    });
+    // Event fires even on 0-transfer (inherent to FHE silent failure)
+    expect(event).to.not.be.undefined;
+  });
 });

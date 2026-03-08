@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fhePaywall } from "../src/fhePaywallMiddleware.js";
 import { FHE_SCHEME } from "../src/types.js";
-import type { FhePaywallConfig, FhePaymentPayload } from "../src/types.js";
+import type { FhePaywallConfig, FhePaymentPayload, NonceStore } from "../src/types.js";
 
 // ============================================================================
 // Mock Express req/res/next
@@ -136,7 +136,7 @@ describe("fhePaywall middleware", () => {
       expect(res.body.accepts[0].recipientAddress).toBe(config.recipientAddress);
     });
 
-    it("should include chainId", async () => {
+    it("should include default chainId (Sepolia)", async () => {
       const middleware = fhePaywall(createDefaultConfig());
       const req = createMockReq();
       const res = createMockRes();
@@ -145,6 +145,19 @@ describe("fhePaywall middleware", () => {
       await middleware(req, res, next);
 
       expect(res.body.accepts[0].chainId).toBe(11155111);
+      expect(res.body.accepts[0].network).toBe("eip155:11155111");
+    });
+
+    it("should use custom chainId from config", async () => {
+      const middleware = fhePaywall(createDefaultConfig({ chainId: 1 }));
+      const req = createMockReq();
+      const res = createMockRes();
+      const next = createMockNext();
+
+      await middleware(req, res, next);
+
+      expect(res.body.accepts[0].chainId).toBe(1);
+      expect(res.body.accepts[0].network).toBe("eip155:1");
     });
   });
 
@@ -214,6 +227,51 @@ describe("fhePaywall middleware", () => {
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.body.error).toBe("Missing required payment fields");
     });
+
+    it("should reject wrong chain ID", async () => {
+      const middleware = fhePaywall(createDefaultConfig());
+      const payload: FhePaymentPayload = {
+        scheme: FHE_SCHEME,
+        txHash: "0xabc",
+        nonce: "0x" + "ff".repeat(32),
+        from: "0xSender",
+        chainId: 1, // mainnet, but middleware expects Sepolia (11155111)
+      };
+      const req = createMockReq({
+        headers: { payment: encodePaymentHeader(payload) },
+        socket: { remoteAddress: "10.0.2.1" },
+      });
+      const res = createMockRes();
+      const next = createMockNext();
+
+      await middleware(req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.body.error).toContain("Chain ID mismatch");
+    });
+
+    it("should accept correct chain ID", async () => {
+      const middleware = fhePaywall(createDefaultConfig());
+      const payload: FhePaymentPayload = {
+        scheme: FHE_SCHEME,
+        txHash: "0xabc",
+        nonce: "0x" + "dd".repeat(32),
+        from: "0xSender",
+        chainId: 11155111, // correct Sepolia
+      };
+      const req = createMockReq({
+        headers: { payment: encodePaymentHeader(payload) },
+        socket: { remoteAddress: "10.0.2.2" },
+      });
+      const res = createMockRes();
+      const next = createMockNext();
+
+      await middleware(req, res, next);
+
+      // Should proceed to on-chain verification (will fail due to mock RPC but not due to chainId)
+      // The important thing: it did NOT return 400 with "Chain ID mismatch"
+      expect(res.body?.error).not.toContain("Chain ID mismatch");
+    });
   });
 
   describe("Rate limiting", () => {
@@ -250,11 +308,11 @@ describe("fhePaywall middleware", () => {
   });
 
   describe("Nonce tracking", () => {
-    it("should reject duplicate nonces", async () => {
+    it("should reject duplicate nonces (default in-memory)", async () => {
       const middleware = fhePaywall(createDefaultConfig());
       const nonce = "0x" + "aa".repeat(32);
 
-      // First request with this nonce — will fail verification but nonce is tracked
+      // First request with this nonce
       const payload: FhePaymentPayload = {
         scheme: FHE_SCHEME,
         txHash: "0xtxhash1",
@@ -280,6 +338,60 @@ describe("fhePaywall middleware", () => {
 
       expect(res2.status).toHaveBeenCalledWith(400);
       expect(res2.body.error).toBe("Nonce already used");
+    });
+
+    it("should use custom NonceStore when provided", async () => {
+      const store: NonceStore = {
+        check: vi.fn().mockResolvedValue(true),
+        add: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const middleware = fhePaywall(createDefaultConfig({ nonceStore: store }));
+      const payload: FhePaymentPayload = {
+        scheme: FHE_SCHEME,
+        txHash: "0xtx",
+        nonce: "0x" + "bb".repeat(32),
+        from: "0xSender",
+        chainId: 11155111,
+      };
+
+      const req = createMockReq({
+        headers: { payment: encodePaymentHeader(payload) },
+        socket: { remoteAddress: "10.0.3.1" },
+      });
+      const res = createMockRes();
+      await middleware(req, res, createMockNext());
+
+      // Custom store should have been called
+      expect(store.check).toHaveBeenCalledWith(payload.nonce);
+      expect(store.add).toHaveBeenCalledWith(payload.nonce);
+    });
+
+    it("should reject when custom NonceStore says nonce exists", async () => {
+      const store: NonceStore = {
+        check: vi.fn().mockResolvedValue(false), // nonce already seen
+        add: vi.fn(),
+      };
+
+      const middleware = fhePaywall(createDefaultConfig({ nonceStore: store }));
+      const payload: FhePaymentPayload = {
+        scheme: FHE_SCHEME,
+        txHash: "0xtx",
+        nonce: "0x" + "cc".repeat(32),
+        from: "0xSender",
+        chainId: 11155111,
+      };
+
+      const req = createMockReq({
+        headers: { payment: encodePaymentHeader(payload) },
+        socket: { remoteAddress: "10.0.3.2" },
+      });
+      const res = createMockRes();
+      await middleware(req, res, createMockNext());
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.body.error).toBe("Nonce already used");
+      expect(store.add).not.toHaveBeenCalled();
     });
   });
 });
