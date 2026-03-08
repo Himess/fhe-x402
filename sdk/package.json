@@ -1,0 +1,39 @@
+{
+  "name": "fhe-x402-sdk",
+  "version": "0.1.0",
+  "description": "FHE-powered x402 payment SDK — encrypted amounts, public participants",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ethers": "^6.16.0"
+  },
+  "peerDependencies": {
+    "fhevmjs": ">=0.6.0"
+  },
+  "peerDependenciesMeta": {
+    "fhevmjs": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "tsup": "^8.0.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0"
+  }
+}

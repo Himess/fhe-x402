@@ -1,0 +1,16 @@
+node_modules/
+artifacts/
+cache/
+types/
+coverage/
+coverage.json
+fhevmTemp/
+deployments/
+dist/
+
+.env
+*.log
+
+# IDE
+.vscode/
+.idea/
