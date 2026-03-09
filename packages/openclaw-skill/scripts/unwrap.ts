@@ -1,4 +1,4 @@
-import { getContracts, getPoolAddress, ok, fail, parseCliArgs } from "./_wallet.js";
+import { getContracts, getTokenAddress, ok, fail, parseCliArgs } from "./_wallet.js";
 
 export async function run(args: Record<string, string>): Promise<string> {
   try {
@@ -13,23 +13,26 @@ export async function run(args: Record<string, string>): Promise<string> {
     }
     const rawAmount = BigInt(Math.round(amountFloat * 1_000_000));
 
-    const { pool, signer, fhevmInstance } = await getContracts();
+    const { token, signer, fhevmInstance } = await getContracts();
     const signerAddress = await signer.getAddress();
-    const poolAddress = getPoolAddress();
+    const tokenAddress = getTokenAddress();
 
-    // Encrypt withdrawal amount using fhevmjs
-    const input = fhevmInstance.createEncryptedInput(poolAddress, signerAddress);
+    // Encrypt unwrap amount using fhevmjs
+    const input = fhevmInstance.createEncryptedInput(tokenAddress, signerAddress);
     input.add64(rawAmount);
     const encrypted = await input.encrypt();
 
-    const tx = await pool.requestWithdraw(
+    // Unwrap cUSDC -> USDC (2-step: request then KMS finalizes)
+    const tx = await token.unwrap(
+      signerAddress,
+      signerAddress,
       encrypted.handles[0],
       encrypted.inputProof
     );
     const receipt = await tx.wait();
 
     return ok({
-      action: "withdraw_requested",
+      action: "unwrap_requested",
       amount: amountStr,
       txHash: receipt.hash,
       blockNumber: receipt.blockNumber,
@@ -37,11 +40,11 @@ export async function run(args: Record<string, string>): Promise<string> {
     });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return fail(`Withdrawal request failed: ${msg}`);
+    return fail(`Unwrap failed: ${msg}`);
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("withdraw.ts")) {
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("unwrap.ts")) {
   const args = parseCliArgs(process.argv.slice(2));
   run(args).then(console.log);
 }

@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { getContracts, getPoolAddress, ok, fail, parseAmount, parseCliArgs } from "./_wallet.js";
+import { getContracts, getTokenAddress, ok, fail, parseAmount, parseCliArgs } from "./_wallet.js";
 
 export async function run(args: Record<string, string>): Promise<string> {
   try {
@@ -21,33 +21,36 @@ export async function run(args: Record<string, string>): Promise<string> {
       return fail("Invalid amount. Must be a positive number.");
     }
 
-    const { pool, signer, fhevmInstance } = await getContracts();
+    const { token, verifier, signer, fhevmInstance } = await getContracts();
     const signerAddress = await signer.getAddress();
-    const poolAddress = getPoolAddress();
+    const tokenAddress = getTokenAddress();
 
-    // Encrypt amount using fhevmjs
-    const input = fhevmInstance.createEncryptedInput(poolAddress, signerAddress);
+    // Encrypt amount using fhevmjs (use tokenAddress for encrypted input)
+    const input = fhevmInstance.createEncryptedInput(tokenAddress, signerAddress);
     input.add64(rawAmount);
     const encrypted = await input.encrypt();
 
     // Generate random nonce
     const nonce = ethers.hexlify(ethers.randomBytes(32));
 
-    const tx = await pool.pay(
+    // Confidential transfer via token contract
+    const tx = await token.confidentialTransfer(
       to,
       encrypted.handles[0],
-      encrypted.inputProof,
-      rawAmount,
-      nonce,
-      ethers.ZeroHash
+      encrypted.inputProof
     );
     const receipt = await tx.wait();
+
+    // Record payment on verifier contract
+    const verifierTx = await verifier.recordPayment(signerAddress, to, nonce);
+    const verifierReceipt = await verifierTx.wait();
 
     return ok({
       action: "pay",
       to,
       amount: amountStr,
       txHash: receipt.hash,
+      verifierTxHash: verifierReceipt.hash,
       blockNumber: receipt.blockNumber,
       nonce,
     });

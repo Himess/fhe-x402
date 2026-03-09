@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 
 interface Props {
-  onWithdraw: (amount: string) => Promise<void>;
+  onUnwrap: (amount: string) => Promise<void>;
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -40,25 +40,25 @@ const styles: Record<string, React.CSSProperties> = {
   error: { color: "#ff6b6b", fontSize: 12, marginTop: 4 },
 };
 
-export default function WithdrawForm({ onWithdraw }: Props) {
+export default function UnwrapForm({ onUnwrap }: Props) {
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleWithdraw = async () => {
+  const handleUnwrap = async () => {
     const num = parseFloat(amount);
     if (isNaN(num) || num <= 0) {
       setError("Amount must be a positive number");
       return;
     }
-    if (num < 0.01) {
-      setError("Minimum withdrawal is 0.01 USDC");
+    if (num < 0.02) {
+      setError("Minimum unwrap is 0.02 USDC (fee: 0.01 USDC)");
       return;
     }
     setError("");
     setLoading(true);
     try {
-      await onWithdraw(amount);
+      await onUnwrap(amount);
       setAmount("");
     } finally {
       setLoading(false);
@@ -67,28 +67,28 @@ export default function WithdrawForm({ onWithdraw }: Props) {
 
   return (
     <div>
-      <div style={styles.label}>Request Withdraw</div>
+      <div style={styles.label}>Unwrap cUSDC to USDC</div>
       <div style={styles.row}>
         <input
           style={styles.input}
-          placeholder="Amount USDC"
+          placeholder="Amount cUSDC"
           type="number"
           step="0.01"
-          min="0.01"
+          min="0.02"
           value={amount}
           onChange={(e) => { setAmount(e.target.value); setError(""); }}
           disabled={loading}
         />
         <button
           style={loading ? styles.btnDisabled : styles.btn}
-          onClick={handleWithdraw}
+          onClick={handleUnwrap}
           disabled={loading}
         >
-          {loading ? "Requesting..." : "Request"}
+          {loading ? "Requesting..." : "Unwrap"}
         </button>
       </div>
       {error && <div style={styles.error}>{error}</div>}
-      <div style={styles.note}>Step 1 only. Step 2 (finalize) requires async KMS decryption callback.</div>
+      <div style={styles.note}>Step 1: Request unwrap. Step 2: KMS decrypts amount, then finalizeUnwrap() completes.</div>
     </div>
   );
 }

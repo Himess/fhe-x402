@@ -12,8 +12,7 @@ export type {
   NonceStore,
 } from "./types.js";
 
-export { FHE_SCHEME, POOL_ABI, PayErrorCode } from "./types.js";
-export type { ConfidentialPayResult, ClaimPaymentResult } from "./types.js";
+export { FHE_SCHEME, TOKEN_ABI, VERIFIER_ABI } from "./types.js";
 
 // Payment handler (client-side)
 export { FhePaymentHandler, decodePaymentHeader } from "./fhePaymentHandler.js";
@@ -32,10 +31,6 @@ export type { FacilitatorConfig } from "./facilitator.js";
 // ERC-8004 integration
 export { fhePaymentMethod, fhePaymentProof } from "./erc8004/index.js";
 export type { FhePaymentMethod, PaymentProofForFeedback } from "./erc8004/index.js";
-
-// Balance gateway server
-export { createBalanceGateway } from "./balanceGateway.js";
-export type { BalanceGatewayConfig } from "./balanceGateway.js";
 
 // Error classes
 export {

@@ -1,21 +1,18 @@
-import { getContracts, ok, fail } from "./_wallet.js";
-
-const DEFAULT_POOL = "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73";
+import { getContracts, getTokenAddress, getVerifierAddress, ok, fail } from "./_wallet.js";
 
 export async function run(): Promise<string> {
   try {
-    const { signer, provider, pool } = await getContracts();
+    const { signer, provider } = await getContracts();
     const address = await signer.getAddress();
     const ethBalance = await provider.getBalance(address);
-    const isInit = await pool.isInitialized(address);
 
     return ok({
       action: "info",
       network: "Ethereum Sepolia",
-      poolAddress: process.env.POOL_ADDRESS || DEFAULT_POOL,
+      tokenAddress: getTokenAddress(),
+      verifierAddress: getVerifierAddress(),
       walletAddress: address,
       ethBalance: ethBalance.toString(),
-      isInitialized: isInit,
       scheme: "fhe-confidential-v1",
     });
   } catch (e: unknown) {

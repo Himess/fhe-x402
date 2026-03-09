@@ -1,5 +1,5 @@
 import { JsonRpcProvider, Wallet, Contract } from "ethers";
-import { POOL_ABI } from "fhe-x402-sdk";
+import { TOKEN_ABI, VERIFIER_ABI } from "fhe-x402-sdk";
 import type { FhevmInstance } from "fhe-x402-sdk";
 import { parseArgs } from "node:util";
 
@@ -7,7 +7,8 @@ import { parseArgs } from "node:util";
 // Constants
 // ============================================================================
 
-const DEFAULT_POOL = "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73";
+const DEFAULT_TOKEN = "0xNEW_TOKEN_ADDRESS"; // will deploy later
+const DEFAULT_VERIFIER = "0xNEW_VERIFIER_ADDRESS";
 const DEFAULT_USDC = "0x229146B746cf3A314dee33f08b84f8EFd5F314F4";
 const DEFAULT_GATEWAY = "https://gateway.sepolia.zama.ai";
 
@@ -20,7 +21,8 @@ const USDC_ABI = [
 // Singleton
 // ============================================================================
 
-let pool: Contract | null = null;
+let token: Contract | null = null;
+let verifier: Contract | null = null;
 let usdc: Contract | null = null;
 let signer: Wallet | null = null;
 let provider: JsonRpcProvider | null = null;
@@ -35,10 +37,12 @@ async function initContracts(): Promise<void> {
   provider = new JsonRpcProvider(rpc);
   signer = new Wallet(privateKey, provider);
 
-  const poolAddr = process.env.POOL_ADDRESS || DEFAULT_POOL;
+  const tokenAddr = process.env.TOKEN_ADDRESS || DEFAULT_TOKEN;
+  const verifierAddr = process.env.VERIFIER_ADDRESS || DEFAULT_VERIFIER;
   const usdcAddr = process.env.USDC_ADDRESS || DEFAULT_USDC;
 
-  pool = new Contract(poolAddr, POOL_ABI, signer);
+  token = new Contract(tokenAddr, TOKEN_ABI, signer);
+  verifier = new Contract(verifierAddr, VERIFIER_ABI, signer);
   usdc = new Contract(usdcAddr, USDC_ABI, signer);
 
   // Initialize fhevmjs for FHE encryption
@@ -52,7 +56,8 @@ async function initContracts(): Promise<void> {
 }
 
 export async function getContracts(): Promise<{
-  pool: Contract;
+  token: Contract;
+  verifier: Contract;
   usdc: Contract;
   signer: Wallet;
   provider: JsonRpcProvider;
@@ -63,7 +68,8 @@ export async function getContracts(): Promise<{
   }
   await initPromise;
   return {
-    pool: pool!,
+    token: token!,
+    verifier: verifier!,
     usdc: usdc!,
     signer: signer!,
     provider: provider!,
@@ -71,8 +77,12 @@ export async function getContracts(): Promise<{
   };
 }
 
-export function getPoolAddress(): string {
-  return process.env.POOL_ADDRESS || DEFAULT_POOL;
+export function getTokenAddress(): string {
+  return process.env.TOKEN_ADDRESS || DEFAULT_TOKEN;
+}
+
+export function getVerifierAddress(): string {
+  return process.env.VERIFIER_ADDRESS || DEFAULT_VERIFIER;
 }
 
 // ============================================================================

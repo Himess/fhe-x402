@@ -19,7 +19,8 @@ function create402Body(): FhePaymentRequired {
         chainId: 11155111,
         price: "1000000",
         asset: "USDC",
-        poolAddress: "0x1234567890123456789012345678901234567890",
+        tokenAddress: "0x1234567890123456789012345678901234567890",
+        verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
         recipientAddress: "0xaabbccddee112233445566778899aabbccddeeff",
         maxTimeoutSeconds: 300,
       },
@@ -30,7 +31,8 @@ function create402Body(): FhePaymentRequired {
 
 function createMockFetchOptions(): FheFetchOptions {
   return {
-    poolAddress: "0x1234567890123456789012345678901234567890",
+    tokenAddress: "0x1234567890123456789012345678901234567890",
+    verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
     rpcUrl: "http://localhost:8545",
     signer: {
       getAddress: vi.fn().mockResolvedValue("0xAlice"),
@@ -176,12 +178,12 @@ describe("fheFetch", () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("should pass memo option through", async () => {
+  it("should pass extra options through", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       new Response("OK", { status: 200 })
     );
 
-    const options = { ...createMockFetchOptions(), memo: "0x" + "ab".repeat(32) };
+    const options = { ...createMockFetchOptions(), timeoutMs: 10000 };
     const response = await fheFetch("https://api.example.com/data", options);
     expect(response.status).toBe(200);
   });

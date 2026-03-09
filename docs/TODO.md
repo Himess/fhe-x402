@@ -101,11 +101,29 @@
 - [x] SDK: PayErrorCode.OVER_SPENDING_LIMIT (4) + new ABI entries + events
 - [x] SDK: 93 SDK tests passing
 
+## Completed (V3.0)
+
+- [x] Contract: Migrate to ERC-7984 (OpenZeppelin Confidential Contracts)
+- [x] Contract: Inherit ERC7984 base (confidentialBalanceOf, confidentialTransfer, setOperator, isOperator)
+- [x] Contract: Replace custom _balances with ERC7984 _mint/_burn/_update
+- [x] Contract: Inherit Ownable2Step (2-step ownership transfer)
+- [x] Contract: Inherit Pausable (standard pause/unpause)
+- [x] Contract: Pre-check FHE.isInitialized() before _update()/_burn() to preserve silent failure
+- [x] Contract: Remove custom balanceOf, isInitialized, requestBalance, balanceSnapshotOf
+- [x] Contract: ERC-7984 fee-free confidentialTransfer (standard) vs pay() (x402 protocol fees)
+- [x] Interface: Remove OZ-inherited events/errors/functions from IConfidentialPaymentPool
+- [x] Tests: Update all 8 test files (balanceOf→confidentialBalanceOf, OZ error names)
+- [x] SDK: POOL_ABI updated for ERC-7984 (confidentialBalanceOf, confidentialTransfer, setOperator, etc.)
+- [x] SDK: Balance gateway updated (removed requestBalance, uses confidentialBalanceOf)
+- [x] Frontend: BalanceDisplay uses confidentialBalanceOf instead of isInitialized
+- [x] Frontend: Removed requestBalance decryption button (now uses ERC-7984 disclosure)
+- [x] ConfidentialPaymentPoolUpgradeable deferred (marked .deferred)
+
 ## In Progress
 
 - [ ] Demo video recording (5-minute walkthrough)
 
-## Planned (V2.1)
+## Planned (V3.1)
 
 - [ ] Professional security audit (Trail of Bits / OpenZeppelin / Quantstamp)
 - [ ] Bug bounty program (Immunefi / Code4rena)

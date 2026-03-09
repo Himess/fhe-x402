@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction, RequestHandler } from "express";
-import { Contract, JsonRpcProvider, ethers } from "ethers";
+import { JsonRpcProvider, ethers } from "ethers";
 import type {
   FhePaymentRequirements,
   FhePaymentPayload,
@@ -114,19 +114,28 @@ declare global {
 // Middleware
 // ============================================================================
 
-const POOL_EVENT_ABI = [
-  "event PaymentExecuted(address indexed from, address indexed to, uint64 minPrice, bytes32 nonce, bytes32 memo)",
+const TOKEN_EVENT_ABI = [
+  "event ConfidentialTransfer(address indexed from, address indexed to, bytes32 indexed amount)",
+];
+
+const VERIFIER_EVENT_ABI = [
+  "event PaymentVerified(address indexed payer, address indexed server, bytes32 indexed nonce)",
 ];
 
 /**
  * Express middleware that puts an FHE x402 paywall on a route.
  *
+ * V4.0: Verifies ConfidentialTransfer event (from cUSDC token) + PaymentVerified event (from verifier).
+ *
  * No Payment header → 402 with requirements.
- * Has Payment header → decode, verify PaymentExecuted event on-chain, call next().
+ * Has Payment header → decode, verify events on-chain, call next().
  */
 export function fhePaywall(config: FhePaywallConfig): RequestHandler {
-  if (!ethers.isAddress(config.poolAddress)) {
-    throw new Error(`Invalid pool address: ${config.poolAddress}`);
+  if (!ethers.isAddress(config.tokenAddress)) {
+    throw new Error(`Invalid token address: ${config.tokenAddress}`);
+  }
+  if (!ethers.isAddress(config.verifierAddress)) {
+    throw new Error(`Invalid verifier address: ${config.verifierAddress}`);
   }
   if (!ethers.isAddress(config.recipientAddress)) {
     throw new Error(`Invalid recipient address: ${config.recipientAddress}`);
@@ -161,7 +170,8 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
         chainId,
         price: String(config.price),
         asset: config.asset,
-        poolAddress: config.poolAddress,
+        tokenAddress: config.tokenAddress,
+        verifierAddress: config.verifierAddress,
         recipientAddress: config.recipientAddress,
         maxTimeoutSeconds: maxTimeout,
       };
@@ -227,8 +237,9 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
       await nonceStore.add(payload.nonce);
     }
 
-    // ===== Verify on-chain event =====
+    // ===== Verify on-chain events =====
     try {
+      // Verify ConfidentialTransfer event (from cUSDC token)
       const receipt = await provider.getTransactionReceipt(payload.txHash);
       if (!receipt || receipt.status === 0) {
         res.status(400).json({ error: "Transaction failed or not found" });
@@ -247,22 +258,20 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
         }
       }
 
-      // Parse PaymentExecuted events from the receipt
-      const iface = new ethers.Interface(POOL_EVENT_ABI);
-      let verified = false;
+      // Parse ConfidentialTransfer event
+      const tokenIface = new ethers.Interface(TOKEN_EVENT_ABI);
+      let transferVerified = false;
 
       for (const log of receipt.logs) {
-        if (log.address.toLowerCase() !== config.poolAddress.toLowerCase()) continue;
+        if (log.address.toLowerCase() !== config.tokenAddress.toLowerCase()) continue;
         try {
-          const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
+          const parsed = tokenIface.parseLog({ topics: log.topics as string[], data: log.data });
           if (
-            parsed?.name === "PaymentExecuted" &&
+            parsed?.name === "ConfidentialTransfer" &&
             parsed.args[0].toLowerCase() === payload.from.toLowerCase() &&
-            parsed.args[1].toLowerCase() === config.recipientAddress.toLowerCase() &&
-            BigInt(parsed.args[2]) >= BigInt(config.price) && // FIX C-1: minPrice must be >= required price
-            parsed.args[3] === payload.nonce
+            parsed.args[1].toLowerCase() === config.recipientAddress.toLowerCase()
           ) {
-            verified = true;
+            transferVerified = true;
             break;
           }
         } catch {
@@ -270,9 +279,44 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
         }
       }
 
-      if (!verified) {
-        res.status(400).json({ error: "Payment event not found or mismatched" });
+      if (!transferVerified) {
+        res.status(400).json({ error: "ConfidentialTransfer event not found or mismatched" });
         return;
+      }
+
+      // Verify PaymentVerified event (from verifier) — if verifierTxHash provided
+      if (payload.verifierTxHash) {
+        const vReceipt = await provider.getTransactionReceipt(payload.verifierTxHash);
+        if (!vReceipt || vReceipt.status === 0) {
+          res.status(400).json({ error: "Verifier transaction failed or not found" });
+          return;
+        }
+
+        const verifierIface = new ethers.Interface(VERIFIER_EVENT_ABI);
+        let nonceVerified = false;
+
+        for (const log of vReceipt.logs) {
+          if (log.address.toLowerCase() !== config.verifierAddress.toLowerCase()) continue;
+          try {
+            const parsed = verifierIface.parseLog({ topics: log.topics as string[], data: log.data });
+            if (
+              parsed?.name === "PaymentVerified" &&
+              parsed.args[0].toLowerCase() === payload.from.toLowerCase() &&
+              parsed.args[1].toLowerCase() === config.recipientAddress.toLowerCase() &&
+              parsed.args[2] === payload.nonce
+            ) {
+              nonceVerified = true;
+              break;
+            }
+          } catch {
+            continue;
+          }
+        }
+
+        if (!nonceVerified) {
+          res.status(400).json({ error: "PaymentVerified event not found or mismatched" });
+          return;
+        }
       }
 
       // Attach payment info
@@ -282,6 +326,7 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
         asset: config.asset,
         recipient: config.recipientAddress,
         txHash: payload.txHash,
+        verifierTxHash: payload.verifierTxHash || "",
         nonce: payload.nonce,
         blockNumber: receipt.blockNumber,
       };

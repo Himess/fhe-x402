@@ -51,7 +51,8 @@ describe("createFacilitatorServer", () => {
 
   it("creates an express app", async () => {
     const app = await createFacilitatorServer({
-      poolAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      tokenAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
       rpcUrl: "https://sepolia.infura.io",
     });
 
@@ -63,7 +64,8 @@ describe("createFacilitatorServer", () => {
 
   it("registers /info, /verify, /health endpoints", async () => {
     await createFacilitatorServer({
-      poolAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      tokenAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
       rpcUrl: "https://sepolia.infura.io",
     });
 
@@ -77,7 +79,8 @@ describe("createFacilitatorServer", () => {
 
   it("adds API key middleware when apiKey is set", async () => {
     await createFacilitatorServer({
-      poolAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      tokenAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
       rpcUrl: "https://sepolia.infura.io",
       apiKey: "test-api-key-123",
     });
@@ -93,7 +96,8 @@ describe("/info endpoint", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     await createFacilitatorServer({
-      poolAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      tokenAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
       rpcUrl: "https://sepolia.infura.io",
     });
 
@@ -108,7 +112,8 @@ describe("/info endpoint", () => {
     const data = res.json.mock.calls[0][0];
     expect(data.schemes).toContain("fhe-confidential-v1");
     expect(data.features).toContain("fhe-encrypted-amounts");
-    expect(data.features).toContain("silent-failure-privacy");
+    expect(data.features).toContain("token-centric");
+    expect(data.features).toContain("fee-free-transfers");
     expect(data.tokens).toContain("USDC");
     expect(data.protocolFee).toBe("0.1%");
   });
@@ -116,7 +121,8 @@ describe("/info endpoint", () => {
   it("uses custom name and version", async () => {
     vi.clearAllMocks();
     await createFacilitatorServer({
-      poolAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      tokenAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
       rpcUrl: "https://sepolia.infura.io",
       name: "Custom Facilitator",
       version: "2.0.0",
@@ -145,7 +151,8 @@ describe("/health endpoint", () => {
   it("returns ok status", async () => {
     vi.clearAllMocks();
     await createFacilitatorServer({
-      poolAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      tokenAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
       rpcUrl: "https://sepolia.infura.io",
     });
 
@@ -166,7 +173,8 @@ describe("/verify endpoint", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     await createFacilitatorServer({
-      poolAddress: "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73",
+      tokenAddress: "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73",
+      verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
       rpcUrl: "https://sepolia.infura.io",
     });
 
@@ -211,7 +219,7 @@ describe("/verify endpoint", () => {
     expect(res.json.mock.calls[0][0].error).toContain("failed or not found");
   });
 
-  it("rejects when PaymentExecuted event not found", async () => {
+  it("rejects when ConfidentialTransfer event not found", async () => {
     mockGetTransactionReceipt.mockResolvedValue({
       status: 1,
       hash: "0xabc123",
@@ -233,17 +241,17 @@ describe("/verify endpoint", () => {
     expect(res.json.mock.calls[0][0].error).toContain("not found");
   });
 
-  it("verifies valid PaymentExecuted event", async () => {
-    const poolAddr = "0xff87ec6cb07d8aa26abc81037e353a28c7752d73";
+  it("verifies valid ConfidentialTransfer event", async () => {
+    const tokenAddr = "0xff87ec6cb07d8aa26abc81037e353a28c7752d73";
     mockGetTransactionReceipt.mockResolvedValue({
       status: 1,
       hash: "0xabc123",
       blockNumber: 100,
-      logs: [{ address: poolAddr, topics: ["0x"], data: "0x" }],
+      logs: [{ address: tokenAddr, topics: ["0x"], data: "0x" }],
     });
     mockParseLog.mockReturnValue({
-      name: "PaymentExecuted",
-      args: ["0xAlice", "0xBob", 1000000n, "0xnonce1"],
+      name: "ConfidentialTransfer",
+      args: ["0xAlice", "0xBob"],
     });
 
     const req = {
@@ -267,7 +275,8 @@ describe("API key authentication", () => {
   it("rejects request with wrong API key", async () => {
     vi.clearAllMocks();
     await createFacilitatorServer({
-      poolAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      tokenAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
       rpcUrl: "https://sepolia.infura.io",
       apiKey: "correct-api-key",
     });
@@ -292,7 +301,8 @@ describe("API key authentication", () => {
   it("allows /health without API key", async () => {
     vi.clearAllMocks();
     await createFacilitatorServer({
-      poolAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      tokenAddress: "0x1234567890abcdef1234567890abcdef12345678",
+      verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
       rpcUrl: "https://sepolia.infura.io",
       apiKey: "correct-api-key",
     });

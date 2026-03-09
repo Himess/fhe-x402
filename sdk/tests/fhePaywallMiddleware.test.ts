@@ -48,7 +48,8 @@ function createDefaultConfig(overrides: Partial<FhePaywallConfig> = {}): FhePayw
   return {
     price: "1000000",
     asset: "USDC",
-    poolAddress: "0x1234567890123456789012345678901234567890",
+    tokenAddress: "0x1234567890123456789012345678901234567890",
+    verifierAddress: "0xaabbccddee112233445566778899aabbccddeef0",
     recipientAddress: "0xaabbccddee112233445566778899aabbccddeeff",
     rpcUrl: "http://localhost:8545",
     ...overrides,
@@ -65,10 +66,16 @@ function encodePaymentHeader(payload: FhePaymentPayload): string {
 
 describe("fhePaywall middleware", () => {
   describe("configuration", () => {
-    it("should throw on invalid pool address", () => {
+    it("should throw on invalid token address", () => {
       expect(() =>
-        fhePaywall(createDefaultConfig({ poolAddress: "not-an-address" }))
-      ).toThrow("Invalid pool address");
+        fhePaywall(createDefaultConfig({ tokenAddress: "not-an-address" }))
+      ).toThrow("Invalid token address");
+    });
+
+    it("should throw on invalid verifier address", () => {
+      expect(() =>
+        fhePaywall(createDefaultConfig({ verifierAddress: "not-an-address" }))
+      ).toThrow("Invalid verifier address");
     });
 
     it("should throw on invalid recipient address", () => {
@@ -123,7 +130,7 @@ describe("fhePaywall middleware", () => {
       expect(res.body.resource.url).toContain("/api/data");
     });
 
-    it("should include pool and recipient addresses", async () => {
+    it("should include token, verifier, and recipient addresses", async () => {
       const config = createDefaultConfig();
       const middleware = fhePaywall(config);
       const req = createMockReq();
@@ -132,7 +139,8 @@ describe("fhePaywall middleware", () => {
 
       await middleware(req, res, next);
 
-      expect(res.body.accepts[0].poolAddress).toBe(config.poolAddress);
+      expect(res.body.accepts[0].tokenAddress).toBe(config.tokenAddress);
+      expect(res.body.accepts[0].verifierAddress).toBe(config.verifierAddress);
       expect(res.body.accepts[0].recipientAddress).toBe(config.recipientAddress);
     });
 
@@ -233,6 +241,7 @@ describe("fhePaywall middleware", () => {
       const payload: FhePaymentPayload = {
         scheme: FHE_SCHEME,
         txHash: "0xabc",
+        verifierTxHash: "0xdef",
         nonce: "0x" + "ff".repeat(32),
         from: "0xSender",
         chainId: 1, // mainnet, but middleware expects Sepolia (11155111)
@@ -255,6 +264,7 @@ describe("fhePaywall middleware", () => {
       const payload: FhePaymentPayload = {
         scheme: FHE_SCHEME,
         txHash: "0xabc",
+        verifierTxHash: "0xdef",
         nonce: "0x" + "dd".repeat(32),
         from: "0xSender",
         chainId: 11155111, // correct Sepolia
@@ -316,6 +326,7 @@ describe("fhePaywall middleware", () => {
       const payload: FhePaymentPayload = {
         scheme: FHE_SCHEME,
         txHash: "0xtxhash1",
+        verifierTxHash: "0xvtxhash1",
         nonce,
         from: "0xSender",
         chainId: 11155111,
@@ -350,6 +361,7 @@ describe("fhePaywall middleware", () => {
       const payload: FhePaymentPayload = {
         scheme: FHE_SCHEME,
         txHash: "0xtx",
+        verifierTxHash: "0xvtx",
         nonce: "0x" + "bb".repeat(32),
         from: "0xSender",
         chainId: 11155111,
@@ -377,6 +389,7 @@ describe("fhePaywall middleware", () => {
       const payload: FhePaymentPayload = {
         scheme: FHE_SCHEME,
         txHash: "0xtx",
+        verifierTxHash: "0xvtx",
         nonce: "0x" + "cc".repeat(32),
         from: "0xSender",
         chainId: 11155111,

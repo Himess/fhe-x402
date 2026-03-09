@@ -5,7 +5,7 @@ import {
   ExecutableGameFunctionStatus,
 } from "@virtuals-protocol/game";
 import { JsonRpcProvider, Wallet, Contract, ethers } from "ethers";
-import { POOL_ABI } from "fhe-x402-sdk";
+import { TOKEN_ABI, VERIFIER_ABI } from "fhe-x402-sdk";
 import type { FhevmInstance } from "fhe-x402-sdk";
 
 // ============================================================================
@@ -19,7 +19,8 @@ export interface IFhePluginOptions {
   credentials: {
     privateKey: string;
     rpcUrl?: string;
-    poolAddress: string;
+    tokenAddress: string;
+    verifierAddress: string;
     usdcAddress?: string;
     chainId?: number;
     /** Required: fhevmjs instance for FHE encryption */
@@ -41,7 +42,8 @@ class FhePlugin {
   private id: string;
   private name: string;
   private description: string;
-  private pool: Contract | null = null;
+  private token: Contract | null = null;
+  private verifier: Contract | null = null;
   private usdc: Contract | null = null;
   private signer: Wallet | null = null;
   private initPromise: Promise<void> | null = null;
@@ -52,14 +54,17 @@ class FhePlugin {
     this.name = options.name || "FHE x402 Payment Worker";
     this.description =
       options.description ||
-      "Manages encrypted USDC payments using FHE on Ethereum. Can deposit, pay, request withdraw, and check status.";
+      "Manages encrypted USDC payments using FHE on Ethereum. Can wrap, pay, unwrap, and check status.";
     this.credentials = options.credentials;
 
     if (!this.credentials.privateKey) {
       throw new Error("Private key is required");
     }
-    if (!this.credentials.poolAddress) {
-      throw new Error("Pool address is required");
+    if (!this.credentials.tokenAddress) {
+      throw new Error("Token address is required");
+    }
+    if (!this.credentials.verifierAddress) {
+      throw new Error("Verifier address is required");
     }
     if (!this.credentials.fhevmInstance) {
       throw new Error("fhevmjs instance is required");
@@ -68,7 +73,8 @@ class FhePlugin {
 
   // Lazy-init singleton
   private async getContracts(): Promise<{
-    pool: Contract;
+    token: Contract;
+    verifier: Contract;
     usdc: Contract;
     signer: Wallet;
   }> {
@@ -76,7 +82,12 @@ class FhePlugin {
       this.initPromise = this.initContracts();
     }
     await this.initPromise;
-    return { pool: this.pool!, usdc: this.usdc!, signer: this.signer! };
+    return {
+      token: this.token!,
+      verifier: this.verifier!,
+      usdc: this.usdc!,
+      signer: this.signer!,
+    };
   }
 
   private async initContracts(): Promise<void> {
@@ -84,9 +95,15 @@ class FhePlugin {
     const provider = new JsonRpcProvider(rpc);
     this.signer = new Wallet(this.credentials.privateKey, provider);
 
-    this.pool = new Contract(
-      this.credentials.poolAddress,
-      POOL_ABI,
+    this.token = new Contract(
+      this.credentials.tokenAddress,
+      TOKEN_ABI,
+      this.signer
+    );
+
+    this.verifier = new Contract(
+      this.credentials.verifierAddress,
+      VERIFIER_ABI,
       this.signer
     );
 
@@ -98,19 +115,19 @@ class FhePlugin {
   }
 
   // ============================================================================
-  // GameFunction: fhe_deposit
+  // GameFunction: fhe_wrap
   // ============================================================================
 
-  get depositFunction() {
+  get wrapFunction() {
     const self = this;
     return new GameFunction({
-      name: "fhe_deposit",
+      name: "fhe_wrap",
       description:
-        "Deposit USDC into the FHE payment pool. Converts public USDC into an encrypted balance. Amount is in USDC (e.g. '2' for 2 USDC).",
+        "Wrap USDC into cUSDC (ERC-7984 confidential token). Converts public USDC into an encrypted balance. Amount is in USDC (e.g. '2' for 2 USDC).",
       args: [
         {
           name: "amount",
-          description: "Amount of USDC to deposit (e.g. '2' for 2 USDC, '0.5' for 0.5 USDC)",
+          description: "Amount of USDC to wrap (e.g. '2' for 2 USDC, '0.5' for 0.5 USDC)",
         },
       ] as const,
       executable: async (args, logger) => {
@@ -132,27 +149,28 @@ class FhePlugin {
           }
           const rawAmount = BigInt(Math.round(amountFloat * 1_000_000));
 
-          logger(`Depositing ${amountStr} USDC (${rawAmount} raw units)...`);
+          logger(`Wrapping ${amountStr} USDC (${rawAmount} raw units)...`);
 
-          const { pool, usdc } = await self.getContracts();
+          const { token, usdc, signer } = await self.getContracts();
+          const signerAddress = await signer.getAddress();
 
-          // Approve USDC
+          // Approve USDC to token contract
           const approveTx = await usdc.approve(
-            self.credentials.poolAddress,
+            self.credentials.tokenAddress,
             rawAmount
           );
           await approveTx.wait();
 
-          // Deposit (plaintext — no FHE encryption needed for deposit)
-          const tx = await pool.deposit(rawAmount);
+          // Wrap (plaintext -- no FHE encryption needed for wrap)
+          const tx = await token.wrap(signerAddress, rawAmount);
           const receipt = await tx.wait();
 
-          logger(`Deposit confirmed: TX ${receipt.hash}`);
+          logger(`Wrap confirmed: TX ${receipt.hash}`);
 
           return new ExecutableGameFunctionResponse(
             ExecutableGameFunctionStatus.Done,
             JSON.stringify({
-              action: "deposit",
+              action: "wrap",
               amount: amountStr,
               txHash: receipt.hash,
               blockNumber: receipt.blockNumber,
@@ -162,7 +180,7 @@ class FhePlugin {
           const msg = e instanceof Error ? e.message : String(e);
           return new ExecutableGameFunctionResponse(
             ExecutableGameFunctionStatus.Failed,
-            `Deposit failed: ${msg}`
+            `Wrap failed: ${msg}`
           );
         }
       },
@@ -178,7 +196,7 @@ class FhePlugin {
     return new GameFunction({
       name: "fhe_pay",
       description:
-        "Pay another address from your encrypted pool balance using FHE encryption. The actual amount transferred is encrypted on-chain.",
+        "Pay another address from your encrypted cUSDC balance using FHE encryption. The actual amount transferred is encrypted on-chain.",
       args: [
         {
           name: "to",
@@ -187,6 +205,10 @@ class FhePlugin {
         {
           name: "amount",
           description: "Amount of USDC to pay (e.g. '1' for 1 USDC)",
+        },
+        {
+          name: "nonce",
+          description: "Payment nonce for verifier (hex string, e.g. '0xabc...'). If omitted, a random nonce is generated.",
         },
       ] as const,
       executable: async (args, logger) => {
@@ -219,33 +241,39 @@ class FhePlugin {
 
           logger(`Encrypting ${amountStr} USDC with fhevmjs...`);
 
-          const { pool, signer } = await self.getContracts();
+          const { token, verifier, signer } = await self.getContracts();
           const signerAddress = await signer.getAddress();
 
           // Encrypt amount using fhevmjs
           const input = self.credentials.fhevmInstance.createEncryptedInput(
-            self.credentials.poolAddress,
+            self.credentials.tokenAddress,
             signerAddress
           );
           input.add64(rawAmount);
           const encrypted = await input.encrypt();
 
-          // Generate random nonce
-          const nonce = ethers.hexlify(ethers.randomBytes(32));
+          // Generate or use provided nonce
+          const nonce = args.nonce || ethers.hexlify(ethers.randomBytes(32));
 
           logger(`Paying ${amountStr} USDC to ${to}...`);
 
-          const tx = await pool.pay(
+          // Confidential transfer on token
+          const tx = await token.confidentialTransfer(
             to,
             encrypted.handles[0],
-            encrypted.inputProof,
-            rawAmount,
-            nonce,
-            ethers.ZeroHash
+            encrypted.inputProof
           );
           const receipt = await tx.wait();
 
-          logger(`Payment confirmed: TX ${receipt.hash}`);
+          // Record payment in verifier
+          const verifierTx = await verifier.recordPayment(
+            signerAddress,
+            to,
+            nonce
+          );
+          const verifierReceipt = await verifierTx.wait();
+
+          logger(`Payment confirmed: TX ${receipt.hash}, Verifier TX ${verifierReceipt.hash}`);
 
           return new ExecutableGameFunctionResponse(
             ExecutableGameFunctionStatus.Done,
@@ -254,6 +282,7 @@ class FhePlugin {
               to,
               amount: amountStr,
               txHash: receipt.hash,
+              verifierTxHash: verifierReceipt.hash,
               blockNumber: receipt.blockNumber,
               nonce,
             })
@@ -270,19 +299,19 @@ class FhePlugin {
   }
 
   // ============================================================================
-  // GameFunction: fhe_withdraw
+  // GameFunction: fhe_unwrap
   // ============================================================================
 
-  get withdrawFunction() {
+  get unwrapFunction() {
     const self = this;
     return new GameFunction({
-      name: "fhe_withdraw",
+      name: "fhe_unwrap",
       description:
-        "Request withdrawal from the FHE payment pool (step 1 of 2). Encrypts the withdrawal amount and submits on-chain. Step 2 (finalize) requires async KMS decryption callback.",
+        "Unwrap cUSDC back to USDC (step 1 of 2). Encrypts the unwrap amount and submits on-chain. Step 2 (finalize) requires async KMS decryption callback.",
       args: [
         {
           name: "amount",
-          description: "Amount of USDC to withdraw (e.g. '1' for 1 USDC)",
+          description: "Amount of USDC to unwrap (e.g. '1' for 1 USDC)",
         },
       ] as const,
       executable: async (args, logger) => {
@@ -304,33 +333,35 @@ class FhePlugin {
           }
           const rawAmount = BigInt(Math.round(amountFloat * 1_000_000));
 
-          logger(`Encrypting withdrawal amount with fhevmjs...`);
+          logger(`Encrypting unwrap amount with fhevmjs...`);
 
-          const { pool, signer } = await self.getContracts();
+          const { token, signer } = await self.getContracts();
           const signerAddress = await signer.getAddress();
 
-          // Encrypt withdrawal amount using fhevmjs
+          // Encrypt unwrap amount using fhevmjs
           const input = self.credentials.fhevmInstance.createEncryptedInput(
-            self.credentials.poolAddress,
+            self.credentials.tokenAddress,
             signerAddress
           );
           input.add64(rawAmount);
           const encrypted = await input.encrypt();
 
-          logger(`Requesting withdrawal of ${amountStr} USDC...`);
+          logger(`Requesting unwrap of ${amountStr} USDC...`);
 
-          const tx = await pool.requestWithdraw(
+          const tx = await token.unwrap(
+            signerAddress,
+            signerAddress,
             encrypted.handles[0],
             encrypted.inputProof
           );
           const receipt = await tx.wait();
 
-          logger(`Withdrawal requested: TX ${receipt.hash}. Waiting for KMS finalization.`);
+          logger(`Unwrap requested: TX ${receipt.hash}. Waiting for KMS finalization.`);
 
           return new ExecutableGameFunctionResponse(
             ExecutableGameFunctionStatus.Done,
             JSON.stringify({
-              action: "withdraw_requested",
+              action: "unwrap_requested",
               amount: amountStr,
               txHash: receipt.hash,
               blockNumber: receipt.blockNumber,
@@ -341,117 +372,7 @@ class FhePlugin {
           const msg = e instanceof Error ? e.message : String(e);
           return new ExecutableGameFunctionResponse(
             ExecutableGameFunctionStatus.Failed,
-            `Withdrawal request failed: ${msg}`
-          );
-        }
-      },
-    });
-  }
-
-  // ============================================================================
-  // GameFunction: fhe_finalize_withdraw
-  // ============================================================================
-
-  get finalizeWithdrawFunction() {
-    const self = this;
-    return new GameFunction({
-      name: "fhe_finalize_withdraw",
-      description:
-        "Finalize a pending withdrawal (step 2 of 2). Requires the clear amount and decryption proof from the KMS gateway. This completes the withdrawal and transfers USDC back to your wallet.",
-      args: [
-        {
-          name: "clearAmount",
-          description: "The decrypted withdrawal amount in raw USDC units (e.g. '1000000' for 1 USDC)",
-        },
-        {
-          name: "decryptionProof",
-          description: "The KMS decryption proof (hex bytes)",
-        },
-      ] as const,
-      executable: async (args, logger) => {
-        try {
-          const clearAmountStr = args.clearAmount;
-          const proofStr = args.decryptionProof;
-
-          if (!clearAmountStr || !proofStr) {
-            return new ExecutableGameFunctionResponse(
-              ExecutableGameFunctionStatus.Failed,
-              "Both 'clearAmount' and 'decryptionProof' are required"
-            );
-          }
-
-          const clearAmount = parseInt(clearAmountStr);
-          if (isNaN(clearAmount) || clearAmount < 0) {
-            return new ExecutableGameFunctionResponse(
-              ExecutableGameFunctionStatus.Failed,
-              "Invalid clearAmount. Must be a non-negative integer."
-            );
-          }
-
-          logger(`Finalizing withdrawal of ${clearAmount} raw units...`);
-
-          const { pool } = await self.getContracts();
-          const tx = await pool.finalizeWithdraw(clearAmount, proofStr);
-          const receipt = await tx.wait();
-
-          const amountUSDC = (clearAmount / 1_000_000).toFixed(2);
-          logger(`Withdrawal finalized: ${amountUSDC} USDC | TX: ${receipt.hash}`);
-
-          return new ExecutableGameFunctionResponse(
-            ExecutableGameFunctionStatus.Done,
-            JSON.stringify({
-              action: "withdraw_finalized",
-              amount: amountUSDC,
-              clearAmount: clearAmountStr,
-              txHash: receipt.hash,
-              blockNumber: receipt.blockNumber,
-            })
-          );
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          return new ExecutableGameFunctionResponse(
-            ExecutableGameFunctionStatus.Failed,
-            `Finalize withdrawal failed: ${msg}`
-          );
-        }
-      },
-    });
-  }
-
-  // ============================================================================
-  // GameFunction: fhe_cancel_withdraw
-  // ============================================================================
-
-  get cancelWithdrawFunction() {
-    const self = this;
-    return new GameFunction({
-      name: "fhe_cancel_withdraw",
-      description:
-        "Cancel a pending withdrawal request and refund the amount back to your encrypted pool balance.",
-      args: [] as const,
-      executable: async (_args, logger) => {
-        try {
-          logger("Cancelling pending withdrawal...");
-
-          const { pool } = await self.getContracts();
-          const tx = await pool.cancelWithdraw();
-          const receipt = await tx.wait();
-
-          logger(`Withdrawal cancelled: TX ${receipt.hash}`);
-
-          return new ExecutableGameFunctionResponse(
-            ExecutableGameFunctionStatus.Done,
-            JSON.stringify({
-              action: "withdraw_cancelled",
-              txHash: receipt.hash,
-              blockNumber: receipt.blockNumber,
-            })
-          );
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          return new ExecutableGameFunctionResponse(
-            ExecutableGameFunctionStatus.Failed,
-            `Cancel withdrawal failed: ${msg}`
+            `Unwrap request failed: ${msg}`
           );
         }
       },
@@ -467,20 +388,19 @@ class FhePlugin {
     return new GameFunction({
       name: "fhe_balance",
       description:
-        "Check if the wallet has been initialized in the FHE pool and view public USDC balance.",
+        "Check the wallet's public USDC balance. Encrypted cUSDC balance requires KMS decryption.",
       args: [] as const,
       executable: async (_args, logger) => {
         try {
           logger("Checking balance status...");
 
-          const { pool, usdc, signer } = await self.getContracts();
+          const { usdc, signer } = await self.getContracts();
           const address = await signer.getAddress();
 
-          const isInit = await pool.isInitialized(address);
           const publicBalance: bigint = await usdc.balanceOf(address);
           const balanceUSDC = (Number(publicBalance) / 1_000_000).toFixed(2);
 
-          logger(`Public USDC: ${balanceUSDC}, Pool initialized: ${isInit}`);
+          logger(`Public USDC: ${balanceUSDC}`);
 
           return new ExecutableGameFunctionResponse(
             ExecutableGameFunctionStatus.Done,
@@ -489,8 +409,7 @@ class FhePlugin {
               walletAddress: address,
               publicBalanceUSDC: balanceUSDC,
               publicBalance: publicBalance.toString(),
-              isInitialized: isInit,
-              note: "Encrypted balance requires KMS decryption via requestBalance().",
+              note: "Encrypted cUSDC balance requires KMS decryption.",
             })
           );
         } catch (e: unknown) {
@@ -512,7 +431,7 @@ class FhePlugin {
     const self = this;
     return new GameFunction({
       name: "fhe_info",
-      description: "Get pool address, network, and wallet address information.",
+      description: "Get token address, verifier address, network, and wallet address information.",
       args: [] as const,
       executable: async (_args, logger) => {
         try {
@@ -527,7 +446,8 @@ class FhePlugin {
               action: "info",
               network: "Ethereum Sepolia",
               chainId: self.credentials.chainId || 11155111,
-              poolAddress: self.credentials.poolAddress,
+              tokenAddress: self.credentials.tokenAddress,
+              verifierAddress: self.credentials.verifierAddress,
               walletAddress: address,
               scheme: "fhe-confidential-v1",
             })
@@ -557,11 +477,9 @@ class FhePlugin {
       name: this.name,
       description: this.description,
       functions: data?.functions || [
-        this.depositFunction,
+        this.wrapFunction,
         this.payFunction,
-        this.withdrawFunction,
-        this.finalizeWithdrawFunction,
-        this.cancelWithdrawFunction,
+        this.unwrapFunction,
         this.balanceFunction,
         this.infoFunction,
       ],
@@ -572,13 +490,15 @@ class FhePlugin {
             const { signer } = await self.getContracts();
             return {
               network: "Ethereum Sepolia",
-              pool_address: self.credentials.poolAddress,
+              token_address: self.credentials.tokenAddress,
+              verifier_address: self.credentials.verifierAddress,
               wallet_address: await signer.getAddress(),
             };
           } catch {
             return {
               network: "Ethereum Sepolia",
-              pool_address: self.credentials.poolAddress,
+              token_address: self.credentials.tokenAddress,
+              verifier_address: self.credentials.verifierAddress,
               wallet_address: "unknown",
             };
           }

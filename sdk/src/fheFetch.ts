@@ -19,10 +19,10 @@ export function createFheFetch(
 /**
  * Performs an HTTP request with automatic x402 FHE payment handling.
  *
- * Flow:
+ * V4.0 Flow:
  * 1. Fetch URL
- * 2. If 402 → encrypt amount, call pool.pay(), get txHash
- * 3. Retry with Payment header containing txHash + nonce
+ * 2. If 402 → encrypt amount, call cUSDC.confidentialTransfer() + verifier.recordPayment()
+ * 3. Retry with Payment header containing txHash + verifierTxHash + nonce
  * 4. Return final response
  */
 export async function fheFetch(
@@ -30,7 +30,8 @@ export async function fheFetch(
   options: FheFetchOptions
 ): Promise<Response> {
   const {
-    poolAddress: _poolAddress,
+    tokenAddress: _tokenAddress,
+    verifierAddress: _verifierAddress,
     rpcUrl: _rpcUrl,
     signer,
     fhevmInstance,
@@ -40,10 +41,10 @@ export async function fheFetch(
     timeoutMs,
     maxRetries,
     retryDelayMs,
-    memo,
     ...fetchOptions
   } = options;
-  void _poolAddress;
+  void _tokenAddress;
+  void _verifierAddress;
   void _rpcUrl;
 
   const timeout = timeoutMs ?? 30_000;
@@ -60,7 +61,6 @@ export async function fheFetch(
   const handler = new FhePaymentHandler(signer, fhevmInstance, {
     maxPayment,
     allowedNetworks,
-    memo,
   });
 
   let result: FhePaymentResult | null;
@@ -105,7 +105,8 @@ export async function fheFetchWithCallback(
   onPayment: (result: FhePaymentResult, success: boolean) => void
 ): Promise<Response> {
   const {
-    poolAddress: _poolAddress2,
+    tokenAddress: _tokenAddress2,
+    verifierAddress: _verifierAddress2,
     rpcUrl: _rpcUrl2,
     signer,
     fhevmInstance,
@@ -113,10 +114,10 @@ export async function fheFetchWithCallback(
     allowedNetworks,
     dryRun,
     timeoutMs,
-    memo,
     ...fetchOptions
   } = options;
-  void _poolAddress2;
+  void _tokenAddress2;
+  void _verifierAddress2;
   void _rpcUrl2;
 
   const timeout = timeoutMs ?? 30_000;
@@ -130,7 +131,6 @@ export async function fheFetchWithCallback(
   const handler = new FhePaymentHandler(signer, fhevmInstance, {
     maxPayment,
     allowedNetworks,
-    memo,
   });
 
   const result = await handler.handlePaymentRequired(responseForParsing);

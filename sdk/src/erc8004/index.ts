@@ -7,8 +7,8 @@ export interface FhePaymentMethod {
   scheme: "fhe-confidential-v1";
   network: string;
   token: string;
-  pool: string;
-  facilitator: string;
+  tokenAddress: string;
+  verifier: string;
   privacyLevel: "encrypted-balances";
   features: string[];
   description: string;
@@ -17,7 +17,7 @@ export interface FhePaymentMethod {
 export interface PaymentProofForFeedback {
   type: "fhe-x402-nonce";
   nonce: string;
-  pool: string;
+  tokenAddress: string;
   network: string;
   timestamp: number;
 }
@@ -27,7 +27,8 @@ export interface PaymentProofForFeedback {
  * for agent registration files.
  */
 export function fhePaymentMethod(config: {
-  poolAddress: string;
+  tokenAddress: string;
+  verifierAddress: string;
   facilitatorUrl?: string;
   network?: string;
   token?: string;
@@ -36,15 +37,15 @@ export function fhePaymentMethod(config: {
     scheme: "fhe-confidential-v1",
     network: config.network || "eip155:11155111",
     token: config.token || "USDC",
-    pool: config.poolAddress,
-    facilitator: config.facilitatorUrl || "https://facilitator.fhe-x402.xyz",
+    tokenAddress: config.tokenAddress,
+    verifier: config.verifierAddress,
     privacyLevel: "encrypted-balances",
     features: [
       "fhe-encrypted-amounts",
-      "silent-failure-privacy",
-      "async-withdraw",
+      "token-centric",
+      "fee-free-transfers",
     ],
-    description: "FHE-encrypted x402 payment via ConfidentialPaymentPool",
+    description: "FHE-encrypted x402 payment via ConfidentialUSDC token",
   };
 }
 
@@ -55,13 +56,13 @@ export function fhePaymentMethod(config: {
  */
 export function fhePaymentProof(
   nonce: string,
-  poolAddress: string,
+  tokenAddress: string,
   network?: string
 ): PaymentProofForFeedback {
   return {
     type: "fhe-x402-nonce",
     nonce,
-    pool: poolAddress,
+    tokenAddress,
     network: network || "eip155:11155111",
     timestamp: Date.now(),
   };

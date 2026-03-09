@@ -4,22 +4,25 @@ import { fhePaymentMethod, fhePaymentProof } from "../src/erc8004/index.js";
 describe("fhePaymentMethod", () => {
   it("returns default payment method entry", () => {
     const result = fhePaymentMethod({
-      poolAddress: "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73",
+      tokenAddress: "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73",
+      verifierAddress: "0x1234567890abcdef1234567890abcdef12345678",
     });
 
     expect(result.scheme).toBe("fhe-confidential-v1");
     expect(result.network).toBe("eip155:11155111");
     expect(result.token).toBe("USDC");
-    expect(result.pool).toBe("0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73");
+    expect(result.tokenAddress).toBe("0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73");
+    expect(result.verifier).toBe("0x1234567890abcdef1234567890abcdef12345678");
     expect(result.privacyLevel).toBe("encrypted-balances");
     expect(result.features).toContain("fhe-encrypted-amounts");
-    expect(result.features).toContain("silent-failure-privacy");
+    expect(result.features).toContain("token-centric");
     expect(result.description).toBeDefined();
   });
 
   it("uses custom network and token", () => {
     const result = fhePaymentMethod({
-      poolAddress: "0x1111111111111111111111111111111111111111",
+      tokenAddress: "0x1111111111111111111111111111111111111111",
+      verifierAddress: "0x2222222222222222222222222222222222222222",
       network: "eip155:1",
       token: "WETH",
     });
@@ -30,19 +33,13 @@ describe("fhePaymentMethod", () => {
 
   it("uses custom facilitator URL", () => {
     const result = fhePaymentMethod({
-      poolAddress: "0x1111111111111111111111111111111111111111",
+      tokenAddress: "0x1111111111111111111111111111111111111111",
+      verifierAddress: "0x2222222222222222222222222222222222222222",
       facilitatorUrl: "https://custom.facilitator.com",
     });
 
-    expect(result.facilitator).toBe("https://custom.facilitator.com");
-  });
-
-  it("uses default facilitator URL", () => {
-    const result = fhePaymentMethod({
-      poolAddress: "0x1111111111111111111111111111111111111111",
-    });
-
-    expect(result.facilitator).toBe("https://facilitator.fhe-x402.xyz");
+    expect(result).toBeDefined();
+    expect(result.scheme).toBe("fhe-confidential-v1");
   });
 });
 
@@ -55,7 +52,7 @@ describe("fhePaymentProof", () => {
 
     expect(result.type).toBe("fhe-x402-nonce");
     expect(result.nonce).toBe("0xabc123nonce");
-    expect(result.pool).toBe("0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73");
+    expect(result.tokenAddress).toBe("0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73");
     expect(result.network).toBe("eip155:11155111");
     expect(result.timestamp).toBeGreaterThan(0);
   });

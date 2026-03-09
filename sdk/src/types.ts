@@ -14,7 +14,8 @@ export interface FhePaymentRequirements {
   chainId: number;
   price: string; // USDC amount (6 decimals) e.g. "1000000" = 1 USDC
   asset: string; // "USDC"
-  poolAddress: string;
+  tokenAddress: string; // ConfidentialUSDC address
+  verifierAddress: string; // X402PaymentVerifier address
   recipientAddress: string;
   maxTimeoutSeconds: number;
 }
@@ -30,7 +31,8 @@ export interface FhePaymentRequired {
 /** Client sends in Payment header (base64 JSON) */
 export interface FhePaymentPayload {
   scheme: typeof FHE_SCHEME;
-  txHash: string;
+  txHash: string; // confidentialTransfer tx
+  verifierTxHash: string; // recordPayment tx
   nonce: string; // bytes32 hex
   from: string;
   chainId: number;
@@ -40,7 +42,8 @@ export interface FhePaymentPayload {
 export interface FhePaywallConfig {
   price: number | string; // USDC amount (6 decimals)
   asset: string;
-  poolAddress: string;
+  tokenAddress: string; // ConfidentialUSDC address
+  verifierAddress: string; // X402PaymentVerifier address
   recipientAddress: string;
   rpcUrl: string;
   chainId?: number; // default: 11155111 (Sepolia)
@@ -64,13 +67,15 @@ export interface PaymentInfo {
   asset: string;
   recipient: string;
   txHash: string;
+  verifierTxHash: string;
   nonce: string;
   blockNumber: number;
 }
 
 /** Fetch options */
 export interface FheFetchOptions extends RequestInit {
-  poolAddress: string;
+  tokenAddress: string;
+  verifierAddress: string;
   rpcUrl: string;
   signer: Signer;
   /** fhevmjs instance for FHE encryption */
@@ -84,8 +89,6 @@ export interface FheFetchOptions extends RequestInit {
   maxRetries?: number;
   /** Base delay between retries in ms, with linear backoff (default: 1000) */
   retryDelayMs?: number;
-  /** Optional memo to attach to payments (bytes32 hex). Defaults to 0x0. */
-  memo?: string;
 }
 
 /** Minimal fhevmjs interface (avoid hard dependency) */
@@ -120,82 +123,50 @@ export interface NonceStore {
 }
 
 // ============================================================================
-// Contract ABI (minimal)
+// Contract ABIs (minimal)
 // ============================================================================
 
-export const POOL_ABI = [
-  "function deposit(uint64 amount) external",
-  "function pay(address to, bytes32 encryptedAmount, bytes calldata inputProof, uint64 minPrice, bytes32 nonce, bytes32 memo) external",
-  "function requestWithdraw(bytes32 encryptedAmount, bytes calldata inputProof) external",
-  "function cancelWithdraw() external",
-  "function expireWithdraw(address user) external",
-  "function finalizeWithdraw(uint64 clearAmount, bytes calldata decryptionProof) external",
-  "function requestBalance() external",
-  "function treasuryWithdraw(uint64 amount) external",
+/** ConfidentialUSDC token ABI */
+export const TOKEN_ABI = [
+  // ERC-7984 inherited
+  "function name() external view returns (string)",
+  "function symbol() external view returns (string)",
+  "function decimals() external view returns (uint8)",
+  "function confidentialTotalSupply() external view returns (bytes32)",
+  "function confidentialBalanceOf(address account) external view returns (bytes32)",
+  "function confidentialTransfer(address to, bytes32 encryptedAmount, bytes calldata inputProof) external returns (bytes32)",
+  "function setOperator(address operator, uint48 until) external",
+  "function isOperator(address holder, address spender) external view returns (bool)",
+  // ERC7984ERC20Wrapper inherited
+  "function wrap(address to, uint256 amount) external",
+  "function unwrap(address from, address to, bytes32 encryptedAmount, bytes calldata inputProof) external",
+  "function finalizeUnwrap(bytes32 burntAmount, uint64 burntAmountCleartext, bytes calldata decryptionProof) external",
+  "function underlying() external view returns (address)",
+  "function rate() external view returns (uint256)",
+  // ConfidentialUSDC specific
+  "function treasury() external view returns (address)",
+  "function accumulatedFees() external view returns (uint256)",
+  "function setTreasury(address newTreasury) external",
+  "function treasuryWithdraw() external",
   "function pause() external",
   "function unpause() external",
-  "function setPoolCaps(uint256 _maxPoolBalance, uint256 _maxUserDeposit) external",
-  "function setTreasury(address newTreasury) external",
+  "function paused() external view returns (bool)",
   "function transferOwnership(address newOwner) external",
   "function acceptOwnership() external",
-  "function payConfidential(bytes32 encryptedRecipient, bytes calldata recipientProof, bytes32 encryptedAmount, bytes calldata amountProof, uint64 minPrice, bytes32 nonce, bytes32 memo) external",
-  "function claimPayment(uint256 paymentId, bytes32 encryptedClaimer, bytes calldata claimerProof) external",
-  "function setSpendingLimit(bytes32 encryptedLimit, bytes calldata inputProof) external",
-  "function removeSpendingLimit() external",
-  "function balanceOf(address account) external view returns (bytes32)",
-  "function balanceSnapshotOf(address account) external view returns (bytes32)",
-  "function usedNonces(bytes32 nonce) external view returns (bool)",
-  "function isInitialized(address account) external view returns (bool)",
-  "function pendingWithdrawOf(address account) external view returns (bytes32)",
-  "function withdrawRequestedAt(address account) external view returns (uint256)",
-  "function paused() external view returns (bool)",
-  "function lastPayError(address account) external view returns (bytes32)",
-  "function paymentCountOf(address account) external view returns (bytes32)",
-  "function confidentialPaymentCount() external view returns (uint256)",
-  "function spendingLimitOf(address account) external view returns (bytes32)",
-  "function dailySpentOf(address account) external view returns (bytes32)",
-  "function lastPayExactlyOneError(address account) external view returns (bytes32)",
-  "event Deposited(address indexed user, uint64 amount)",
-  "event PaymentExecuted(address indexed from, address indexed to, uint64 minPrice, bytes32 nonce, bytes32 memo)",
-  "event WithdrawRequested(address indexed user, uint256 expiresAt)",
-  "event WithdrawCancelled(address indexed user)",
-  "event WithdrawExpired(address indexed user)",
-  "event WithdrawFinalized(address indexed user, uint64 amount)",
+  // ERC-7984 events
+  "event ConfidentialTransfer(address indexed from, address indexed to, bytes32 indexed amount)",
+  "event OperatorSet(address indexed holder, address indexed operator, uint48 until)",
+  // ERC7984ERC20Wrapper events
+  "event UnwrapRequested(address indexed receiver, bytes32 amount)",
+  "event UnwrapFinalized(address indexed receiver, bytes32 encryptedAmount, uint64 cleartextAmount)",
+  // ConfidentialUSDC events
   "event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury)",
-  "event TreasuryWithdrawn(address indexed treasury, uint64 amount)",
-  "event BalanceRequested(address indexed user)",
-  "event PoolCapUpdated(uint256 maxPoolBalance, uint256 maxUserDeposit)",
-  "event Paused(address account)",
-  "event Unpaused(address account)",
-  "event PayErrorRecorded(address indexed user)",
-  "event ConfidentialPaymentCreated(uint256 indexed paymentId, address indexed sender, uint64 minPrice, bytes32 nonce, bytes32 memo)",
-  "event ConfidentialPaymentClaimed(uint256 indexed paymentId, address indexed claimer)",
-  "event SpendingLimitUpdated(address indexed user)",
-  "event SpendingLimitRemoved(address indexed user)",
+  "event TreasuryWithdrawn(address indexed treasury, uint256 amount)",
 ] as const;
 
-// ============================================================================
-// V2.0 Types
-// ============================================================================
-
-/** Pay error codes (decoded from euint8, bit flags) */
-export enum PayErrorCode {
-  OK = 0,
-  INSUFFICIENT_BALANCE = 1,
-  BELOW_MIN_PRICE = 2,
-  BOTH = 3,
-  OVER_SPENDING_LIMIT = 4,
-}
-
-/** Result of createConfidentialPayment */
-export interface ConfidentialPayResult {
-  txHash: string;
-  paymentId: bigint;
-  nonce: string;
-}
-
-/** Result of claimPayment */
-export interface ClaimPaymentResult {
-  txHash: string;
-  paymentId: bigint;
-}
+/** X402PaymentVerifier ABI */
+export const VERIFIER_ABI = [
+  "function recordPayment(address payer, address server, bytes32 nonce) external",
+  "function usedNonces(bytes32 nonce) external view returns (bool)",
+  "event PaymentVerified(address indexed payer, address indexed server, bytes32 indexed nonce)",
+] as const;

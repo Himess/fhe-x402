@@ -4,8 +4,6 @@ import type {
   FhePaymentPayload,
   FhePaymentRequired,
   FhevmInstance,
-  ConfidentialPayResult,
-  ClaimPaymentResult,
 } from "./types.js";
 import { FHE_SCHEME } from "./types.js";
 import { PaymentError, EncryptionError } from "./errors.js";
@@ -17,13 +15,12 @@ import { PaymentError, EncryptionError } from "./errors.js";
 export interface FhePaymentHandlerOptions {
   maxPayment?: bigint;
   allowedNetworks?: string[];
-  /** Optional memo to attach to payments (bytes32 hex). Defaults to 0x0. */
-  memo?: string;
 }
 
 export interface FhePaymentResult {
   paymentHeader: string;
   txHash: string;
+  verifierTxHash: string;
   nonce: string;
 }
 
@@ -34,12 +31,13 @@ export interface FhePaymentResult {
 /**
  * Handles x402 FHE payment flows.
  *
- * Flow:
+ * V4.0 Flow (token-centric):
  * 1. Parse 402 response → extract payment requirements
  * 2. Select matching requirement
  * 3. Encrypt amount with fhevmjs
- * 4. Call pool.pay() on-chain (client pays gas directly)
- * 5. Return txHash + nonce for retry header
+ * 4. Call cUSDC.confidentialTransfer() (fee-free agent-to-agent)
+ * 5. Call verifier.recordPayment() (on-chain nonce)
+ * 6. Return txHash + verifierTxHash + nonce for retry header
  */
 export class FhePaymentHandler {
   private signer: ethers.Signer;
@@ -104,7 +102,7 @@ export class FhePaymentHandler {
     let encrypted: { handles: string[]; inputProof: string };
     try {
       const input = this.fhevmInstance.createEncryptedInput(
-        requirements.poolAddress,
+        requirements.tokenAddress,
         signerAddress
       );
       input.add64(amount);
@@ -112,24 +110,20 @@ export class FhePaymentHandler {
     } catch (err) {
       throw new EncryptionError(
         `FHE encryption failed: ${err instanceof Error ? err.message : String(err)}`,
-        { amount: amount.toString(), poolAddress: requirements.poolAddress }
+        { amount: amount.toString(), tokenAddress: requirements.tokenAddress }
       );
     }
 
-    // Call pool.pay() on-chain
-    const poolABI = [
-      "function pay(address to, bytes32 encryptedAmount, bytes calldata inputProof, uint64 minPrice, bytes32 nonce, bytes32 memo) external",
+    // Step 1: Call cUSDC.confidentialTransfer() — fee-free agent-to-agent transfer
+    const tokenABI = [
+      "function confidentialTransfer(address to, bytes32 encryptedAmount, bytes calldata inputProof) external returns (bytes32)",
     ];
-    const pool = new Contract(requirements.poolAddress, poolABI, this.signer);
+    const token = new Contract(requirements.tokenAddress, tokenABI, this.signer);
 
-    const memo = this.options.memo || ethers.ZeroHash;
-    const tx = await pool.pay(
+    const tx = await token.confidentialTransfer(
       requirements.recipientAddress,
       encrypted.handles[0],
-      encrypted.inputProof,
-      amount,
-      nonce,
-      memo
+      encrypted.inputProof
     );
     const receipt = await tx.wait();
 
@@ -141,10 +135,31 @@ export class FhePaymentHandler {
       });
     }
 
+    // Step 2: Call verifier.recordPayment() — on-chain nonce
+    const verifierABI = [
+      "function recordPayment(address payer, address server, bytes32 nonce) external",
+    ];
+    const verifier = new Contract(requirements.verifierAddress, verifierABI, this.signer);
+
+    const vTx = await verifier.recordPayment(
+      signerAddress,
+      requirements.recipientAddress,
+      nonce
+    );
+    const vReceipt = await vTx.wait();
+
+    if (!vReceipt || vReceipt.status === 0) {
+      throw new PaymentError("Verifier recordPayment failed", {
+        txHash: vTx.hash,
+        nonce,
+      });
+    }
+
     // Build payment payload
     const payload: FhePaymentPayload = {
       scheme: FHE_SCHEME,
       txHash: tx.hash,
+      verifierTxHash: vTx.hash,
       nonce,
       from: signerAddress,
       chainId: requirements.chainId,
@@ -155,128 +170,9 @@ export class FhePaymentHandler {
     return {
       paymentHeader,
       txHash: tx.hash,
+      verifierTxHash: vTx.hash,
       nonce,
     };
-  }
-
-  async createConfidentialPayment(
-    requirements: FhePaymentRequirements,
-    recipientAddress: string
-  ): Promise<ConfidentialPayResult> {
-    const signerAddress = await this.signer.getAddress();
-    const amount = BigInt(requirements.price);
-    const nonce = ethers.hexlify(ethers.randomBytes(32));
-
-    let addrEncrypted: { handles: string[]; inputProof: string };
-    let amtEncrypted: { handles: string[]; inputProof: string };
-
-    try {
-      const addrInput = this.fhevmInstance.createEncryptedInput(
-        requirements.poolAddress,
-        signerAddress
-      );
-      addrInput.addAddress(recipientAddress);
-      addrEncrypted = await addrInput.encrypt();
-
-      const amtInput = this.fhevmInstance.createEncryptedInput(
-        requirements.poolAddress,
-        signerAddress
-      );
-      amtInput.add64(amount);
-      amtEncrypted = await amtInput.encrypt();
-    } catch (err) {
-      throw new EncryptionError(
-        `FHE encryption failed: ${err instanceof Error ? err.message : String(err)}`,
-        { amount: amount.toString(), poolAddress: requirements.poolAddress }
-      );
-    }
-
-    const poolABI = [
-      "function payConfidential(bytes32 encryptedRecipient, bytes recipientProof, bytes32 encryptedAmount, bytes amountProof, uint64 minPrice, bytes32 nonce, bytes32 memo) external",
-    ];
-    const pool = new Contract(requirements.poolAddress, poolABI, this.signer);
-    const memo = this.options.memo || ethers.ZeroHash;
-
-    const tx = await pool.payConfidential(
-      addrEncrypted.handles[0],
-      addrEncrypted.inputProof,
-      amtEncrypted.handles[0],
-      amtEncrypted.inputProof,
-      amount,
-      nonce,
-      memo
-    );
-    const receipt = await tx.wait();
-
-    if (!receipt || receipt.status === 0) {
-      throw new PaymentError("Confidential payment transaction failed", {
-        txHash: tx.hash,
-        to: recipientAddress,
-        amount: amount.toString(),
-      });
-    }
-
-    // Parse paymentId from ConfidentialPaymentCreated event
-    const poolIface = new ethers.Interface([
-      "event ConfidentialPaymentCreated(uint256 indexed paymentId, address indexed sender, uint64 minPrice, bytes32 nonce, bytes32 memo)",
-    ]);
-    let paymentId = 0n;
-    for (const log of receipt.logs) {
-      try {
-        const parsed = poolIface.parseLog({ topics: log.topics, data: log.data });
-        if (parsed?.name === "ConfidentialPaymentCreated") {
-          paymentId = parsed.args[0];
-          break;
-        }
-      } catch {
-        // not our event
-      }
-    }
-
-    return { txHash: tx.hash, paymentId, nonce };
-  }
-
-  async claimPayment(
-    poolAddress: string,
-    paymentId: bigint | number
-  ): Promise<ClaimPaymentResult> {
-    const signerAddress = await this.signer.getAddress();
-
-    let encrypted: { handles: string[]; inputProof: string };
-    try {
-      const input = this.fhevmInstance.createEncryptedInput(
-        poolAddress,
-        signerAddress
-      );
-      input.addAddress(signerAddress);
-      encrypted = await input.encrypt();
-    } catch (err) {
-      throw new EncryptionError(
-        `FHE encryption failed: ${err instanceof Error ? err.message : String(err)}`,
-        { poolAddress }
-      );
-    }
-
-    const poolABI = [
-      "function claimPayment(uint256 paymentId, bytes32 encryptedClaimer, bytes claimerProof) external",
-    ];
-    const pool = new Contract(poolAddress, poolABI, this.signer);
-
-    const tx = await pool.claimPayment(
-      paymentId,
-      encrypted.handles[0],
-      encrypted.inputProof
-    );
-    const receipt = await tx.wait();
-
-    if (!receipt || receipt.status === 0) {
-      throw new PaymentError("Claim payment transaction failed", {
-        txHash: tx.hash,
-        paymentId: String(paymentId),
-      });
-    }
-
-    return { txHash: tx.hash, paymentId: BigInt(paymentId) };
   }
 
   async handlePaymentRequired(

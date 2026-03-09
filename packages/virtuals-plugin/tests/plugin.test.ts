@@ -6,13 +6,11 @@ import { ExecutableGameFunctionStatus } from "@virtuals-protocol/game";
 // ---------------------------------------------------------------------------
 
 const mockApprove = vi.fn();
-const mockDeposit = vi.fn();
-const mockPay = vi.fn();
-const mockRequestWithdraw = vi.fn();
-const mockFinalizeWithdraw = vi.fn();
-const mockCancelWithdraw = vi.fn();
-const mockIsInitialized = vi.fn().mockResolvedValue(true);
 const mockBalanceOf = vi.fn().mockResolvedValue(5_000_000n);
+const mockWrap = vi.fn();
+const mockConfidentialTransfer = vi.fn();
+const mockUnwrap = vi.fn();
+const mockRecordPayment = vi.fn();
 const mockGetAddress = vi.fn().mockResolvedValue("0x1234567890abcdef1234567890abcdef12345678");
 
 vi.mock("ethers", () => ({
@@ -22,43 +20,47 @@ vi.mock("ethers", () => ({
   })),
   Contract: vi.fn().mockImplementation((_addr: string, abi: any) => {
     const abiStr = JSON.stringify(abi);
-    if (abiStr.includes("approve")) {
+    if (abiStr.includes("wrap")) {
+      // Token contract (cUSDC / ERC-7984)
       return {
-        approve: mockApprove,
-        balanceOf: mockBalanceOf,
+        wrap: mockWrap,
+        confidentialTransfer: mockConfidentialTransfer,
+        unwrap: mockUnwrap,
       };
     }
+    if (abiStr.includes("recordPayment")) {
+      // Verifier contract (nonce registry)
+      return {
+        recordPayment: mockRecordPayment,
+      };
+    }
+    // USDC contract
     return {
-      deposit: mockDeposit,
-      pay: mockPay,
-      requestWithdraw: mockRequestWithdraw,
-      finalizeWithdraw: mockFinalizeWithdraw,
-      cancelWithdraw: mockCancelWithdraw,
-      isInitialized: mockIsInitialized,
+      approve: mockApprove,
+      balanceOf: mockBalanceOf,
     };
   }),
   ethers: {
     hexlify: vi.fn().mockReturnValue("0x" + "ab".repeat(32)),
     randomBytes: vi.fn().mockReturnValue(new Uint8Array(32)),
-    ZeroHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
   },
 }));
 
 vi.mock("fhe-x402-sdk", () => ({
-  POOL_ABI: [
-    "function deposit(uint64 amount) external",
-    "function pay(address to, externalEuint64 encryptedAmount, bytes calldata inputProof, uint64 minPrice, bytes32 nonce, bytes32 memo) external",
-    "function requestWithdraw(externalEuint64 encryptedAmount, bytes calldata inputProof) external",
-    "function cancelWithdraw() external",
-    "function finalizeWithdraw(uint64 clearAmount, bytes calldata decryptionProof) external",
-    "function isInitialized(address account) external view returns (bool)",
+  TOKEN_ABI: [
+    "function wrap(address to, uint256 amount) external",
+    "function confidentialTransfer(address to, externalEuint64 encryptedAmount, bytes calldata inputProof) external",
+    "function unwrap(address from, address to, externalEuint64 encryptedAmount, bytes calldata inputProof) external",
+  ],
+  VERIFIER_ABI: [
+    "function recordPayment(address payer, address server, bytes32 nonce) external",
   ],
 }));
 
 import { FhePlugin } from "../src/fhePlugin";
 
 // ---------------------------------------------------------------------------
-// fhevmjs mock — simulates real fhevmjs createEncryptedInput().add64().encrypt()
+// fhevmjs mock -- simulates real fhevmjs createEncryptedInput().add64().encrypt()
 // ---------------------------------------------------------------------------
 
 function createMockFhevmInstance() {
@@ -81,7 +83,8 @@ function createPlugin() {
   return new FhePlugin({
     credentials: {
       privateKey: "0x0000000000000000000000000000000000000000000000000000000000000001",
-      poolAddress: "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73",
+      tokenAddress: "0xAABBCCDDEEFF00112233445566778899AABBCCDD",
+      verifierAddress: "0x1122334455667788990011223344556677889900",
       fhevmInstance: createMockFhevmInstance(),
     },
   });
@@ -106,9 +109,10 @@ describe("FhePlugin constructor", () => {
       description: "Custom desc",
       credentials: {
         privateKey: "0x01",
-        poolAddress: "0x1111111111111111111111111111111111111111",
+        tokenAddress: "0x1111111111111111111111111111111111111111",
+        verifierAddress: "0x2222222222222222222222222222222222222222",
         rpcUrl: "https://custom-rpc.example.com",
-        usdcAddress: "0x2222222222222222222222222222222222222222",
+        usdcAddress: "0x3333333333333333333333333333333333333333",
         chainId: 1,
         fhevmInstance: createMockFhevmInstance(),
       },
@@ -122,24 +126,40 @@ describe("FhePlugin constructor", () => {
         new FhePlugin({
           credentials: {
             privateKey: "",
-            poolAddress: "0x1111111111111111111111111111111111111111",
+            tokenAddress: "0x1111111111111111111111111111111111111111",
+            verifierAddress: "0x2222222222222222222222222222222222222222",
             fhevmInstance: createMockFhevmInstance(),
           },
         })
     ).toThrow("Private key is required");
   });
 
-  it("throws if poolAddress is missing", () => {
+  it("throws if tokenAddress is missing", () => {
     expect(
       () =>
         new FhePlugin({
           credentials: {
             privateKey: "0x01",
-            poolAddress: "",
+            tokenAddress: "",
+            verifierAddress: "0x2222222222222222222222222222222222222222",
             fhevmInstance: createMockFhevmInstance(),
           },
         })
-    ).toThrow("Pool address is required");
+    ).toThrow("Token address is required");
+  });
+
+  it("throws if verifierAddress is missing", () => {
+    expect(
+      () =>
+        new FhePlugin({
+          credentials: {
+            privateKey: "0x01",
+            tokenAddress: "0x1111111111111111111111111111111111111111",
+            verifierAddress: "",
+            fhevmInstance: createMockFhevmInstance(),
+          },
+        })
+    ).toThrow("Verifier address is required");
   });
 
   it("throws if fhevmInstance is missing", () => {
@@ -148,7 +168,8 @@ describe("FhePlugin constructor", () => {
         new FhePlugin({
           credentials: {
             privateKey: "0x01",
-            poolAddress: "0x1111111111111111111111111111111111111111",
+            tokenAddress: "0x1111111111111111111111111111111111111111",
+            verifierAddress: "0x2222222222222222222222222222222222222222",
             fhevmInstance: null as any,
           },
         })
@@ -157,17 +178,17 @@ describe("FhePlugin constructor", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Deposit Tests
+// Wrap Tests (replaces deposit)
 // ---------------------------------------------------------------------------
 
-describe("fhe_deposit", () => {
+describe("fhe_wrap", () => {
   let plugin: FhePlugin;
 
   beforeEach(() => {
     vi.clearAllMocks();
     plugin = createPlugin();
     mockApprove.mockResolvedValue({ wait: vi.fn().mockResolvedValue({}) });
-    mockDeposit.mockResolvedValue({
+    mockWrap.mockResolvedValue({
       wait: vi.fn().mockResolvedValue({
         hash: "0xabc123",
         blockNumber: 12345,
@@ -175,28 +196,34 @@ describe("fhe_deposit", () => {
     });
   });
 
-  it("deposits USDC successfully", async () => {
-    const fn = plugin.depositFunction;
+  it("wraps USDC successfully", async () => {
+    const fn = plugin.wrapFunction;
     const result = await fn.executable({ amount: "2" } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Done);
     const data = JSON.parse(result.feedback);
-    expect(data.action).toBe("deposit");
+    expect(data.action).toBe("wrap");
     expect(data.amount).toBe("2");
     expect(data.txHash).toBe("0xabc123");
     expect(data.blockNumber).toBe(12345);
     expect(mockApprove).toHaveBeenCalled();
-    expect(mockDeposit).toHaveBeenCalledWith(2_000_000n);
+    expect(mockWrap).toHaveBeenCalledWith(
+      "0x1234567890abcdef1234567890abcdef12345678",
+      2_000_000n
+    );
   });
 
-  it("deposits fractional USDC", async () => {
-    const fn = plugin.depositFunction;
+  it("wraps fractional USDC", async () => {
+    const fn = plugin.wrapFunction;
     await fn.executable({ amount: "0.5" } as any, noopLogger);
-    expect(mockDeposit).toHaveBeenCalledWith(500_000n);
+    expect(mockWrap).toHaveBeenCalledWith(
+      "0x1234567890abcdef1234567890abcdef12345678",
+      500_000n
+    );
   });
 
   it("fails when amount is missing", async () => {
-    const fn = plugin.depositFunction;
+    const fn = plugin.wrapFunction;
     const result = await fn.executable({ amount: undefined } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
@@ -204,7 +231,7 @@ describe("fhe_deposit", () => {
   });
 
   it("fails when amount is negative", async () => {
-    const fn = plugin.depositFunction;
+    const fn = plugin.wrapFunction;
     const result = await fn.executable({ amount: "-1" } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
@@ -212,7 +239,7 @@ describe("fhe_deposit", () => {
   });
 
   it("fails when amount is zero", async () => {
-    const fn = plugin.depositFunction;
+    const fn = plugin.wrapFunction;
     const result = await fn.executable({ amount: "0" } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
@@ -220,17 +247,17 @@ describe("fhe_deposit", () => {
   });
 
   it("fails when amount is not a number", async () => {
-    const fn = plugin.depositFunction;
+    const fn = plugin.wrapFunction;
     const result = await fn.executable({ amount: "abc" } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
     expect(result.feedback).toContain("Invalid amount");
   });
 
-  it("handles deposit error gracefully", async () => {
-    mockDeposit.mockRejectedValue(new Error("Insufficient USDC balance"));
+  it("handles wrap error gracefully", async () => {
+    mockWrap.mockRejectedValue(new Error("Insufficient USDC balance"));
 
-    const fn = plugin.depositFunction;
+    const fn = plugin.wrapFunction;
     const result = await fn.executable({ amount: "100" } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
@@ -248,10 +275,16 @@ describe("fhe_pay", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     plugin = createPlugin();
-    mockPay.mockResolvedValue({
+    mockConfidentialTransfer.mockResolvedValue({
       wait: vi.fn().mockResolvedValue({
         hash: "0xdef456",
         blockNumber: 12346,
+      }),
+    });
+    mockRecordPayment.mockResolvedValue({
+      wait: vi.fn().mockResolvedValue({
+        hash: "0xverifier789",
+        blockNumber: 12347,
       }),
     });
   });
@@ -271,15 +304,19 @@ describe("fhe_pay", () => {
     expect(data.action).toBe("pay");
     expect(data.amount).toBe("1");
     expect(data.txHash).toBe("0xdef456");
+    expect(data.verifierTxHash).toBe("0xverifier789");
     expect(data.nonce).toBeDefined();
-    // Verify pool.pay was called with encrypted handles (not placeholder zeros)
-    expect(mockPay).toHaveBeenCalledWith(
+    // Verify token.confidentialTransfer was called with encrypted handles
+    expect(mockConfidentialTransfer).toHaveBeenCalledWith(
       "0x1234567890abcdef1234567890abcdef12345678",
       "0x" + "ff".repeat(32), // encrypted handle from fhevmjs
-      "0x" + "ee".repeat(64), // input proof from fhevmjs
-      1_000_000n,
-      expect.any(String),
-      "0x0000000000000000000000000000000000000000000000000000000000000000" // memo (ethers.ZeroHash)
+      "0x" + "ee".repeat(64)  // input proof from fhevmjs
+    );
+    // Verify verifier.recordPayment was called
+    expect(mockRecordPayment).toHaveBeenCalledWith(
+      "0x1234567890abcdef1234567890abcdef12345678", // payer (signer)
+      "0x1234567890abcdef1234567890abcdef12345678", // server (to)
+      expect.any(String) // nonce
     );
   });
 
@@ -331,7 +368,7 @@ describe("fhe_pay", () => {
   });
 
   it("handles pay error gracefully", async () => {
-    mockPay.mockRejectedValue(new Error("Execution reverted"));
+    mockConfidentialTransfer.mockRejectedValue(new Error("Execution reverted"));
 
     const fn = plugin.payFunction;
     const result = await fn.executable(
@@ -345,45 +382,63 @@ describe("fhe_pay", () => {
     expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
     expect(result.feedback).toContain("Execution reverted");
   });
+
+  it("handles verifier error gracefully", async () => {
+    mockRecordPayment.mockRejectedValue(new Error("Nonce already used"));
+
+    const fn = plugin.payFunction;
+    const result = await fn.executable(
+      {
+        to: "0x1234567890abcdef1234567890abcdef12345678",
+        amount: "1",
+      } as any,
+      noopLogger
+    );
+
+    expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
+    expect(result.feedback).toContain("Nonce already used");
+  });
 });
 
 // ---------------------------------------------------------------------------
-// Withdraw Tests (with real fhevmjs encryption flow)
+// Unwrap Tests (replaces withdraw/finalizeWithdraw/cancelWithdraw)
 // ---------------------------------------------------------------------------
 
-describe("fhe_withdraw", () => {
+describe("fhe_unwrap", () => {
   let plugin: FhePlugin;
 
   beforeEach(() => {
     vi.clearAllMocks();
     plugin = createPlugin();
-    mockRequestWithdraw.mockResolvedValue({
+    mockUnwrap.mockResolvedValue({
       wait: vi.fn().mockResolvedValue({
         hash: "0x789xyz",
-        blockNumber: 12347,
+        blockNumber: 12348,
       }),
     });
   });
 
-  it("encrypts and requests withdrawal successfully", async () => {
-    const fn = plugin.withdrawFunction;
+  it("encrypts and requests unwrap successfully", async () => {
+    const fn = plugin.unwrapFunction;
     const result = await fn.executable({ amount: "1" } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Done);
     const data = JSON.parse(result.feedback);
-    expect(data.action).toBe("withdraw_requested");
+    expect(data.action).toBe("unwrap_requested");
     expect(data.amount).toBe("1");
     expect(data.txHash).toBe("0x789xyz");
     expect(data.note).toContain("KMS");
-    // Verify requestWithdraw was called with encrypted handles
-    expect(mockRequestWithdraw).toHaveBeenCalledWith(
+    // Verify token.unwrap was called with encrypted handles
+    expect(mockUnwrap).toHaveBeenCalledWith(
+      "0x1234567890abcdef1234567890abcdef12345678", // from (signer)
+      "0x1234567890abcdef1234567890abcdef12345678", // to (signer)
       "0x" + "ff".repeat(32),
       "0x" + "ee".repeat(64)
     );
   });
 
   it("fails when amount is missing", async () => {
-    const fn = plugin.withdrawFunction;
+    const fn = plugin.unwrapFunction;
     const result = await fn.executable({ amount: undefined } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
@@ -391,21 +446,21 @@ describe("fhe_withdraw", () => {
   });
 
   it("fails when amount is invalid", async () => {
-    const fn = plugin.withdrawFunction;
+    const fn = plugin.unwrapFunction;
     const result = await fn.executable({ amount: "-1" } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
     expect(result.feedback).toContain("Invalid amount");
   });
 
-  it("handles withdrawal error gracefully", async () => {
-    mockRequestWithdraw.mockRejectedValue(new Error("Already pending withdrawal"));
+  it("handles unwrap error gracefully", async () => {
+    mockUnwrap.mockRejectedValue(new Error("Insufficient encrypted balance"));
 
-    const fn = plugin.withdrawFunction;
+    const fn = plugin.unwrapFunction;
     const result = await fn.executable({ amount: "1" } as any, noopLogger);
 
     expect(result.status).toBe(ExecutableGameFunctionStatus.Failed);
-    expect(result.feedback).toContain("Already pending withdrawal");
+    expect(result.feedback).toContain("Insufficient encrypted balance");
   });
 });
 
@@ -419,11 +474,10 @@ describe("fhe_balance", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     plugin = createPlugin();
-    mockIsInitialized.mockResolvedValue(true);
     mockBalanceOf.mockResolvedValue(5_000_000n);
   });
 
-  it("returns balance and init status", async () => {
+  it("returns public USDC balance", async () => {
     const fn = plugin.balanceFunction;
     const result = await fn.executable({} as any, noopLogger);
 
@@ -431,13 +485,13 @@ describe("fhe_balance", () => {
     const data = JSON.parse(result.feedback);
     expect(data.action).toBe("balance");
     expect(data.publicBalanceUSDC).toBe("5.00");
-    expect(data.isInitialized).toBe(true);
     expect(data.walletAddress).toBe("0x1234567890abcdef1234567890abcdef12345678");
+    expect(data.note).toContain("cUSDC");
+    expect(data.note).toContain("KMS");
   });
 
   it("handles zero balance", async () => {
     mockBalanceOf.mockResolvedValue(0n);
-    mockIsInitialized.mockResolvedValue(false);
 
     const fn = plugin.balanceFunction;
     const result = await fn.executable({} as any, noopLogger);
@@ -445,11 +499,10 @@ describe("fhe_balance", () => {
     expect(result.status).toBe(ExecutableGameFunctionStatus.Done);
     const data = JSON.parse(result.feedback);
     expect(data.publicBalanceUSDC).toBe("0.00");
-    expect(data.isInitialized).toBe(false);
   });
 
   it("handles balance check error", async () => {
-    mockIsInitialized.mockRejectedValue(new Error("RPC timeout"));
+    mockBalanceOf.mockRejectedValue(new Error("RPC timeout"));
 
     const fn = plugin.balanceFunction;
     const result = await fn.executable({} as any, noopLogger);
@@ -464,7 +517,7 @@ describe("fhe_balance", () => {
 // ---------------------------------------------------------------------------
 
 describe("fhe_info", () => {
-  it("returns pool and wallet info", async () => {
+  it("returns token, verifier, and wallet info", async () => {
     const plugin = createPlugin();
     const fn = plugin.infoFunction;
     const result = await fn.executable({} as any, noopLogger);
@@ -473,7 +526,8 @@ describe("fhe_info", () => {
     const data = JSON.parse(result.feedback);
     expect(data.action).toBe("info");
     expect(data.network).toBe("Ethereum Sepolia");
-    expect(data.poolAddress).toBe("0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73");
+    expect(data.tokenAddress).toBe("0xAABBCCDDEEFF00112233445566778899AABBCCDD");
+    expect(data.verifierAddress).toBe("0x1122334455667788990011223344556677889900");
     expect(data.walletAddress).toBe("0x1234567890abcdef1234567890abcdef12345678");
     expect(data.scheme).toBe("fhe-confidential-v1");
   });
@@ -484,14 +538,14 @@ describe("fhe_info", () => {
 // ---------------------------------------------------------------------------
 
 describe("getWorker", () => {
-  it("returns a GameWorker with all 7 functions", () => {
+  it("returns a GameWorker with all 5 functions", () => {
     const plugin = createPlugin();
     const worker = plugin.getWorker();
 
     expect(worker).toBeDefined();
     expect(worker.id).toBe("fhe_x402_worker");
     expect(worker.name).toBe("FHE x402 Payment Worker");
-    expect(worker.functions).toHaveLength(7);
+    expect(worker.functions).toHaveLength(5);
   });
 
   it("allows custom functions override", () => {

@@ -9,7 +9,8 @@ function timingSafeCompare(a: string, b: string): boolean {
 }
 
 export interface FacilitatorConfig {
-  poolAddress: string;
+  tokenAddress: string;
+  verifierAddress: string;
   rpcUrl: string;
   name?: string;
   version?: string;
@@ -17,17 +18,22 @@ export interface FacilitatorConfig {
   chainId?: number;
 }
 
-const POOL_EVENT_ABI = [
-  "event PaymentExecuted(address indexed from, address indexed to, uint64 minPrice, bytes32 nonce, bytes32 memo)",
+const TOKEN_EVENT_ABI = [
+  "event ConfidentialTransfer(address indexed from, address indexed to, bytes32 indexed amount)",
+];
+
+const VERIFIER_EVENT_ABI = [
+  "event PaymentVerified(address indexed payer, address indexed server, bytes32 indexed nonce)",
 ];
 
 /**
  * Create a facilitator Express app with x402-standard endpoints.
- * Verifies PaymentExecuted events on-chain (no ZK proofs needed).
+ * V4.0: Verifies ConfidentialTransfer + PaymentVerified events on-chain.
  *
  * Usage:
  *   const app = await createFacilitatorServer({
- *     poolAddress: '0x...',
+ *     tokenAddress: '0x...',
+ *     verifierAddress: '0x...',
  *     rpcUrl: 'https://sepolia.infura.io/v3/...',
  *   });
  *   app.listen(3001);
@@ -72,7 +78,7 @@ export async function createFacilitatorServer(config: FacilitatorConfig): Promis
   app.get("/info", (_req: any, res: any) => {
     res.json({
       name: config.name || "FHE x402 Facilitator",
-      version: config.version || "1.0.0",
+      version: config.version || "4.0.0",
       schemes: ["fhe-confidential-v1"],
       networks: [network],
       tokens: ["USDC"],
@@ -80,14 +86,14 @@ export async function createFacilitatorServer(config: FacilitatorConfig): Promis
       minFee: "10000",
       features: [
         "fhe-encrypted-amounts",
-        "silent-failure-privacy",
-        "async-withdraw",
+        "token-centric",
+        "fee-free-transfers",
         "event-verification",
       ],
     });
   });
 
-  // /verify — verify PaymentExecuted event on-chain
+  // /verify — verify ConfidentialTransfer + PaymentVerified events on-chain
   app.post("/verify", async (req: any, res: any) => {
     try {
       const { x402Version, scheme, network: reqNetwork, payload } = req.body;
@@ -124,22 +130,20 @@ export async function createFacilitatorServer(config: FacilitatorConfig): Promis
         });
       }
 
-      // Verify PaymentExecuted event exists
-      const iface = new ethers.Interface(POOL_EVENT_ABI);
+      // Verify ConfidentialTransfer event
+      const tokenIface = new ethers.Interface(TOKEN_EVENT_ABI);
       let verified = false;
       let eventFrom = "";
       let eventTo = "";
-      let eventMinPrice = 0n;
 
       for (const log of receipt.logs) {
-        if (log.address.toLowerCase() !== config.poolAddress.toLowerCase()) continue;
+        if (log.address.toLowerCase() !== config.tokenAddress.toLowerCase()) continue;
         try {
-          const parsed = iface.parseLog({ topics: log.topics as string[], data: log.data });
-          if (parsed?.name === "PaymentExecuted") {
+          const parsed = tokenIface.parseLog({ topics: log.topics as string[], data: log.data });
+          if (parsed?.name === "ConfidentialTransfer") {
             verified = true;
             eventFrom = parsed.args[0];
             eventTo = parsed.args[1];
-            eventMinPrice = BigInt(parsed.args[2]);
             break;
           }
         } catch {
@@ -150,7 +154,7 @@ export async function createFacilitatorServer(config: FacilitatorConfig): Promis
       if (!verified) {
         return res.status(400).json({
           valid: false,
-          error: "PaymentExecuted event not found in transaction",
+          error: "ConfidentialTransfer event not found in transaction",
         });
       }
 
@@ -162,7 +166,6 @@ export async function createFacilitatorServer(config: FacilitatorConfig): Promis
         network: reqNetwork || network,
         from: eventFrom,
         to: eventTo,
-        minPrice: eventMinPrice.toString(),
         settledAt: new Date().toISOString(),
       });
     } catch (error: unknown) {

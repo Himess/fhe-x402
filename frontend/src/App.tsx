@@ -1,34 +1,32 @@
 import React, { useState, useRef } from "react";
 import ConnectWallet from "./components/ConnectWallet";
 import BalanceDisplay from "./components/BalanceDisplay";
-import DepositForm from "./components/DepositForm";
+import WrapForm from "./components/DepositForm";
 import PayForm from "./components/PayForm";
-import WithdrawForm from "./components/WithdrawForm";
-import ConfidentialPayForm from "./components/ConfidentialPayForm";
-import ClaimForm from "./components/ClaimForm";
+import UnwrapForm from "./components/WithdrawForm";
 import { BrowserProvider, JsonRpcSigner, Contract, ethers } from "ethers";
 import { initFhevm, createInstance } from "fhevmjs/web";
 
 // Sepolia RPC URL used for fhevmjs initialization
 const SEPOLIA_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
 
-const POOL_ADDRESS = "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73";
-const USDC_ADDRESS = "0x229146B746cf3A314dee33f08b84f8EFd5F314F4";
+const TOKEN_ADDRESS = "0x3864B98D1B1EC2109C679679052e2844b4153889"; // ConfidentialUSDC
+const VERIFIER_ADDRESS = "0x22c04558f9B0C4C5bA0b2676ccF943ee6d8F9490"; // X402PaymentVerifier
+const USDC_ADDRESS = "0xc89e913676B034f8b38E49f7508803d1cDEC9F4f"; // MockUSDC (V4.0 deploy)
 const CHAIN_ID = 11155111;
 const GATEWAY_URL = "https://gateway.sepolia.zama.ai";
 
-const POOL_ABI = [
-  "function deposit(uint64 amount) external",
-  "function pay(address to, bytes32 encryptedAmount, bytes calldata inputProof, uint64 minPrice, bytes32 nonce, bytes32 memo) external",
-  "function requestWithdraw(bytes32 encryptedAmount, bytes calldata inputProof) external",
-  "function cancelWithdraw() external",
-  "function finalizeWithdraw(uint64 clearAmount, bytes calldata decryptionProof) external",
-  "function payConfidential(bytes32 encryptedRecipient, bytes recipientProof, bytes32 encryptedAmount, bytes amountProof, uint64 minPrice, bytes32 nonce, bytes32 memo) external",
-  "function claimPayment(uint256 paymentId, bytes32 encryptedClaimer, bytes claimerProof) external",
-  "function isInitialized(address account) external view returns (bool)",
+const TOKEN_ABI = [
+  "function wrap(address to, uint256 amount) external",
+  "function unwrap(address from, address to, bytes32 encryptedAmount, bytes calldata inputProof) external",
+  "function confidentialTransfer(address to, bytes32 encryptedAmount, bytes calldata inputProof) external returns (bytes32)",
+  "function confidentialBalanceOf(address account) external view returns (bytes32)",
   "function paused() external view returns (bool)",
-  "function withdrawRequestedAt(address account) external view returns (uint256)",
-  "function confidentialPaymentCount() external view returns (uint256)",
+  "function accumulatedFees() external view returns (uint256)",
+];
+
+const VERIFIER_ABI = [
+  "function recordPayment(address payer, address server, bytes32 nonce) external",
 ];
 
 const USDC_ABI = [
@@ -127,9 +125,10 @@ export default function App() {
 
   const getContracts = () => {
     if (!signer) throw new Error("Wallet not connected");
-    const pool = new Contract(POOL_ADDRESS, POOL_ABI, signer);
+    const token = new Contract(TOKEN_ADDRESS, TOKEN_ABI, signer);
+    const verifier = new Contract(VERIFIER_ADDRESS, VERIFIER_ABI, signer);
     const usdc = new Contract(USDC_ADDRESS, USDC_ABI, signer);
-    return { pool, usdc };
+    return { token, verifier, usdc };
   };
 
   const onConnect = async () => {
@@ -155,21 +154,21 @@ export default function App() {
     }
   };
 
-  const onDeposit = async (amount: string) => {
+  const onWrap = async (amount: string) => {
     try {
       showStatus("Approving USDC...", "info");
-      const { pool, usdc } = getContracts();
+      const { token, usdc } = getContracts();
       const raw = BigInt(Math.round(parseFloat(amount) * 1_000_000));
-      const approveTx = await usdc.approve(POOL_ADDRESS, raw);
+      const approveTx = await usdc.approve(TOKEN_ADDRESS, raw);
       await approveTx.wait();
 
-      showStatus("Depositing...", "info");
-      const tx = await pool.deposit(raw);
+      showStatus("Wrapping USDC to cUSDC...", "info");
+      const tx = await token.wrap(address, raw);
       const receipt = await tx.wait();
-      showStatus(`Deposited ${amount} USDC | TX: ${receipt.hash}`, "success");
-      logTx("Deposit", receipt.hash, amount);
+      showStatus(`Wrapped ${amount} USDC to cUSDC | TX: ${receipt.hash}`, "success");
+      logTx("Wrap", receipt.hash, amount);
     } catch (e: any) {
-      showStatus(e.message || "Deposit failed", "error");
+      showStatus(e.message || "Wrap failed", "error");
     }
   };
 
@@ -177,123 +176,50 @@ export default function App() {
     try {
       showStatus("Initializing FHE encryption...", "info");
       const fhevm = await getFhevmInstance();
-      const { pool } = getContracts();
+      const { token, verifier } = getContracts();
       const raw = BigInt(Math.round(parseFloat(amount) * 1_000_000));
 
       showStatus("Encrypting payment amount...", "info");
-      const input = fhevm.createEncryptedInput(POOL_ADDRESS, address);
+      const input = fhevm.createEncryptedInput(TOKEN_ADDRESS, address);
       input.add64(raw);
       const encrypted = await input.encrypt();
 
-      const nonce = ethers.hexlify(ethers.randomBytes(32));
-
-      showStatus("Submitting encrypted payment...", "info");
-      const tx = await pool.pay(
-        to,
-        encrypted.handles[0],
-        encrypted.inputProof,
-        raw,
-        nonce,
-        ethers.ZeroHash
-      );
+      showStatus("Submitting encrypted transfer...", "info");
+      const tx = await token.confidentialTransfer(to, encrypted.handles[0], encrypted.inputProof);
       const receipt = await tx.wait();
-      showStatus(`Paid ${amount} USDC to ${to.slice(0, 8)}... | TX: ${receipt.hash}`, "success");
+
+      // Record payment nonce on verifier
+      const nonce = ethers.hexlify(ethers.randomBytes(32));
+      showStatus("Recording payment nonce...", "info");
+      const vTx = await verifier.recordPayment(address, to, nonce);
+      await vTx.wait();
+
+      showStatus(`Paid ${amount} cUSDC to ${to.slice(0, 8)}... | TX: ${receipt.hash}`, "success");
       logTx("Pay", receipt.hash, amount);
     } catch (e: any) {
       showStatus(e.message || "Payment failed", "error");
     }
   };
 
-  const onWithdraw = async (amount: string) => {
+  const onUnwrap = async (amount: string) => {
     try {
       showStatus("Initializing FHE encryption...", "info");
       const fhevm = await getFhevmInstance();
-      const { pool } = getContracts();
+      const { token } = getContracts();
       const raw = BigInt(Math.round(parseFloat(amount) * 1_000_000));
 
-      showStatus("Encrypting withdrawal amount...", "info");
-      const input = fhevm.createEncryptedInput(POOL_ADDRESS, address);
+      showStatus("Encrypting unwrap amount...", "info");
+      const input = fhevm.createEncryptedInput(TOKEN_ADDRESS, address);
       input.add64(raw);
       const encrypted = await input.encrypt();
 
-      showStatus("Requesting withdrawal...", "info");
-      const tx = await pool.requestWithdraw(encrypted.handles[0], encrypted.inputProof);
+      showStatus("Requesting unwrap...", "info");
+      const tx = await token.unwrap(address, address, encrypted.handles[0], encrypted.inputProof);
       const receipt = await tx.wait();
-      showStatus(`Withdrawal requested for ${amount} USDC | TX: ${receipt.hash}. Awaiting KMS finalization.`, "success");
-      logTx("Withdraw Request", receipt.hash, amount);
+      showStatus(`Unwrap requested for ${amount} cUSDC | TX: ${receipt.hash}. Awaiting KMS finalization.`, "success");
+      logTx("Unwrap Request", receipt.hash, amount);
     } catch (e: any) {
-      showStatus(e.message || "Withdrawal failed", "error");
-    }
-  };
-
-  const onCancelWithdraw = async () => {
-    try {
-      showStatus("Cancelling withdrawal...", "info");
-      const { pool } = getContracts();
-      const tx = await pool.cancelWithdraw();
-      const receipt = await tx.wait();
-      showStatus(`Withdrawal cancelled | TX: ${receipt.hash}`, "success");
-      logTx("Cancel Withdraw", receipt.hash);
-    } catch (e: any) {
-      showStatus(e.message || "Cancel failed", "error");
-    }
-  };
-
-  const onPayConfidential = async (recipient: string, amount: string) => {
-    try {
-      showStatus("Initializing FHE encryption...", "info");
-      const fhevmInst = await getFhevmInstance();
-      const { pool } = getContracts();
-      const raw = BigInt(Math.round(parseFloat(amount) * 1_000_000));
-
-      showStatus("Encrypting recipient address...", "info");
-      const addrInput = fhevmInst.createEncryptedInput(POOL_ADDRESS, address);
-      addrInput.addAddress(recipient);
-      const addrEnc = await addrInput.encrypt();
-
-      showStatus("Encrypting payment amount...", "info");
-      const amtInput = fhevmInst.createEncryptedInput(POOL_ADDRESS, address);
-      amtInput.add64(raw);
-      const amtEnc = await amtInput.encrypt();
-
-      const nonce = ethers.hexlify(ethers.randomBytes(32));
-
-      showStatus("Submitting confidential payment...", "info");
-      const tx = await pool.payConfidential(
-        addrEnc.handles[0], addrEnc.inputProof,
-        amtEnc.handles[0], amtEnc.inputProof,
-        raw, nonce, ethers.ZeroHash
-      );
-      const receipt = await tx.wait();
-      showStatus(`Confidential payment sent | TX: ${receipt.hash}`, "success");
-      logTx("Confidential Pay", receipt.hash, amount);
-    } catch (e: any) {
-      showStatus(e.message || "Confidential payment failed", "error");
-    }
-  };
-
-  const onClaimPayment = async (paymentId: string) => {
-    try {
-      showStatus("Initializing FHE encryption...", "info");
-      const fhevmInst = await getFhevmInstance();
-      const { pool } = getContracts();
-
-      showStatus("Encrypting your address for claim...", "info");
-      const input = fhevmInst.createEncryptedInput(POOL_ADDRESS, address);
-      input.addAddress(address);
-      const encrypted = await input.encrypt();
-
-      showStatus("Claiming payment...", "info");
-      const tx = await pool.claimPayment(
-        BigInt(paymentId),
-        encrypted.handles[0],
-        encrypted.inputProof
-      );
-      const receipt = await tx.wait();
-      showStatus(`Payment #${paymentId} claimed | TX: ${receipt.hash}`, "success");
-      logTx("Claim Payment", receipt.hash);
-    } catch (e: any) {
-      showStatus(e.message || "Claim failed", "error");
+      showStatus(e.message || "Unwrap failed", "error");
     }
   };
 
@@ -304,7 +230,7 @@ export default function App() {
     <div style={styles.container}>
       <div style={styles.header}>
         <div style={styles.title}>FHE x402 Demo</div>
-        <div style={styles.subtitle}>Encrypted USDC payments on Ethereum Sepolia</div>
+        <div style={styles.subtitle}>Encrypted USDC payments on Ethereum Sepolia (V4.0 Token-Centric)</div>
         <div style={styles.badge}>fhe-confidential-v1</div>
       </div>
 
@@ -315,11 +241,11 @@ export default function App() {
       {signer && (
         <>
           <div style={styles.section}>
-            <BalanceDisplay address={address} signer={signer} usdcAddress={USDC_ADDRESS} poolAddress={POOL_ADDRESS} />
+            <BalanceDisplay address={address} signer={signer} usdcAddress={USDC_ADDRESS} tokenAddress={TOKEN_ADDRESS} />
           </div>
 
           <div style={styles.section}>
-            <DepositForm onDeposit={onDeposit} />
+            <WrapForm onWrap={onWrap} />
           </div>
 
           <div style={styles.section}>
@@ -327,34 +253,7 @@ export default function App() {
           </div>
 
           <div style={styles.section}>
-            <WithdrawForm onWithdraw={onWithdraw} />
-          </div>
-
-          <div style={styles.section}>
-            <ConfidentialPayForm onPayConfidential={onPayConfidential} />
-          </div>
-
-          <div style={styles.section}>
-            <ClaimForm onClaimPayment={onClaimPayment} />
-          </div>
-
-          <div style={styles.section}>
-            <h3 style={{color: '#fff', margin: '0 0 12px 0', fontSize: 16}}>Withdraw Actions</h3>
-            <button
-              onClick={onCancelWithdraw}
-              style={{
-                background: '#333',
-                color: '#ff6b6b',
-                border: '1px solid #ff6b6b',
-                borderRadius: 8,
-                padding: '8px 16px',
-                cursor: 'pointer',
-                fontSize: 13,
-                width: '100%',
-              }}
-            >
-              Cancel Pending Withdrawal
-            </button>
+            <UnwrapForm onUnwrap={onUnwrap} />
           </div>
 
           {txHistory.length > 0 && (
@@ -376,7 +275,7 @@ export default function App() {
                     rel="noopener noreferrer"
                     style={{color: '#4a90d9', textDecoration: 'none', fontSize: 11}}
                   >
-                    {tx.txHash.slice(0, 10)}...{tx.txHash.slice(-8)} ↗
+                    {tx.txHash.slice(0, 10)}...{tx.txHash.slice(-8)}
                   </a>
                   <span style={{float: 'right', fontSize: 11}}>
                     {new Date(tx.timestamp).toLocaleTimeString()}

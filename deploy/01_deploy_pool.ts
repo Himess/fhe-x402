@@ -5,7 +5,6 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployer } = await hre.getNamedAccounts();
   const { deploy } = hre.deployments;
 
-  // On testnet, deploy MockUSDC first. On mainnet, use real USDC.
   const isTestnet = hre.network.name === "hardhat" || hre.network.name === "sepolia";
 
   let usdcAddress: string;
@@ -26,25 +25,39 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
     await mintTx.wait();
     console.log(`Minted 1,000,000 USDC to deployer: ${deployer}`);
   } else {
-    // Mainnet USDC address would go here
     throw new Error("Set mainnet USDC address before deploying to mainnet");
   }
 
-  // Deploy ConfidentialPaymentPool
-  console.log("Deploying ConfidentialPaymentPool...");
-  const pool = await deploy("ConfidentialPaymentPool", {
+  // Deploy ConfidentialUSDC (ERC-7984 token)
+  console.log("Deploying ConfidentialUSDC...");
+  const token = await deploy("ConfidentialUSDC", {
     from: deployer,
-    args: [usdcAddress, deployer], // treasury = deployer for now
+    args: [usdcAddress, deployer], // treasury = deployer
     log: true,
   });
-  console.log(`ConfidentialPaymentPool deployed at: ${pool.address}`);
+  console.log(`ConfidentialUSDC deployed at: ${token.address}`);
 
-  // Approve pool to spend deployer's USDC
+  // Deploy X402PaymentVerifier (nonce registry)
+  console.log("Deploying X402PaymentVerifier...");
+  const verifier = await deploy("X402PaymentVerifier", {
+    from: deployer,
+    args: [],
+    log: true,
+  });
+  console.log(`X402PaymentVerifier deployed at: ${verifier.address}`);
+
+  // Approve ConfidentialUSDC to spend deployer's USDC
   const MockUSDC = await hre.ethers.getContractAt("MockUSDC", usdcAddress);
-  const approveTx = await MockUSDC.approve(pool.address, 1_000_000_000_000n);
+  const approveTx = await MockUSDC.approve(token.address, 1_000_000_000_000n);
   await approveTx.wait();
-  console.log("Approved pool to spend deployer's USDC");
+  console.log("Approved ConfidentialUSDC to spend deployer's USDC");
+
+  console.log("\n--- V4.0 Deployment Summary ---");
+  console.log(`MockUSDC:            ${usdcAddress}`);
+  console.log(`ConfidentialUSDC:    ${token.address}`);
+  console.log(`X402PaymentVerifier: ${verifier.address}`);
+  console.log(`Treasury:            ${deployer}`);
 };
 
-func.tags = ["ConfidentialPaymentPool"];
+func.tags = ["ConfidentialUSDC", "X402PaymentVerifier"];
 export default func;

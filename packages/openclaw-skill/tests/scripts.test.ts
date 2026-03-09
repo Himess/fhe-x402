@@ -5,11 +5,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ---------------------------------------------------------------------------
 
 vi.mock("fhe-x402-sdk", () => ({
-  POOL_ABI: [
-    "function deposit(uint64 amount) external",
-    "function pay(address to, externalEuint64 encryptedAmount, bytes calldata inputProof, uint64 minPrice, bytes32 nonce) external",
-    "function requestWithdraw(externalEuint64 encryptedAmount, bytes calldata inputProof) external",
-    "function isInitialized(address account) external view returns (bool)",
+  TOKEN_ABI: [
+    "function wrap(address to, uint256 amount) external",
+    "function unwrap(address from, address to, externalEuint64 encryptedAmount, bytes calldata inputProof) external",
+    "function confidentialTransfer(address to, externalEuint64 encryptedAmount, bytes calldata inputProof) external",
+  ],
+  VERIFIER_ABI: [
+    "function recordPayment(address from, address to, bytes32 nonce) external",
   ],
 }));
 
@@ -32,15 +34,15 @@ vi.mock("fhevmjs", () => ({
 }));
 
 // Mock ethers
-const mockDeposit = vi.fn();
-const mockPay = vi.fn();
-const mockRequestWithdraw = vi.fn();
-const mockIsInitialized = vi.fn().mockResolvedValue(true);
+const mockWrap = vi.fn();
+const mockUnwrap = vi.fn();
+const mockConfidentialTransfer = vi.fn();
+const mockRecordPayment = vi.fn();
 const mockApprove = vi.fn();
 const mockBalanceOf = vi.fn().mockResolvedValue(10_000_000n);
 const mockGetAddress = vi.fn().mockResolvedValue("0x1234567890abcdef1234567890abcdef12345678");
 const mockGetBalance = vi.fn().mockResolvedValue(1_000_000_000_000_000n);
-const mockGetPoolAddress = vi.fn().mockResolvedValue("0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73");
+const mockGetTokenAddress = vi.fn().mockResolvedValue("0xNEW_TOKEN_ADDRESS");
 
 vi.mock("ethers", async () => {
   const actual = await vi.importActual("ethers");
@@ -48,19 +50,29 @@ vi.mock("ethers", async () => {
     ...actual,
     Contract: vi.fn().mockImplementation((_addr: string, abi: any) => {
       const abiStr = JSON.stringify(abi);
-      if (abiStr.includes("approve")) {
+      // USDC: has "approve" but NOT "wrap"
+      if (abiStr.includes("approve") && !abiStr.includes("wrap")) {
         return {
           approve: mockApprove,
           balanceOf: mockBalanceOf,
         };
       }
-      return {
-        deposit: mockDeposit,
-        pay: mockPay,
-        requestWithdraw: mockRequestWithdraw,
-        isInitialized: mockIsInitialized,
-        getAddress: mockGetPoolAddress,
-      };
+      // Token: has "wrap"
+      if (abiStr.includes("wrap")) {
+        return {
+          wrap: mockWrap,
+          confidentialTransfer: mockConfidentialTransfer,
+          unwrap: mockUnwrap,
+          getAddress: mockGetTokenAddress,
+        };
+      }
+      // Verifier: has "recordPayment"
+      if (abiStr.includes("recordPayment")) {
+        return {
+          recordPayment: mockRecordPayment,
+        };
+      }
+      return {};
     }),
     JsonRpcProvider: vi.fn().mockImplementation(() => ({
       getBalance: mockGetBalance,
@@ -75,9 +87,9 @@ vi.mock("ethers", async () => {
 process.env.PRIVATE_KEY = "0x0000000000000000000000000000000000000000000000000000000000000001";
 
 import { run as runBalance } from "../scripts/balance.js";
-import { run as runDeposit } from "../scripts/deposit.js";
+import { run as runWrap } from "../scripts/wrap.js";
 import { run as runPay } from "../scripts/pay.js";
-import { run as runWithdraw } from "../scripts/withdraw.js";
+import { run as runUnwrap } from "../scripts/unwrap.js";
 import { run as runInfo } from "../scripts/info.js";
 
 // ---------------------------------------------------------------------------
@@ -87,35 +99,32 @@ import { run as runInfo } from "../scripts/info.js";
 describe("balance script", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIsInitialized.mockResolvedValue(true);
     mockBalanceOf.mockResolvedValue(5_000_000n);
   });
 
-  it("returns balance and init status", async () => {
+  it("returns balance", async () => {
     const raw = await runBalance();
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(true);
     expect(data.action).toBe("balance");
     expect(data.publicBalanceUSDC).toBe("5.00");
-    expect(data.isInitialized).toBe(true);
     expect(data.walletAddress).toBe("0x1234567890abcdef1234567890abcdef12345678");
+    expect(data.isInitialized).toBeUndefined();
   });
 
   it("handles zero balance", async () => {
     mockBalanceOf.mockResolvedValue(0n);
-    mockIsInitialized.mockResolvedValue(false);
 
     const raw = await runBalance();
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(true);
     expect(data.publicBalanceUSDC).toBe("0.00");
-    expect(data.isInitialized).toBe(false);
   });
 
   it("handles error", async () => {
-    mockIsInitialized.mockRejectedValueOnce(new Error("RPC timeout"));
+    mockBalanceOf.mockRejectedValueOnce(new Error("RPC timeout"));
 
     const raw = await runBalance();
     const data = JSON.parse(raw);
@@ -126,16 +135,16 @@ describe("balance script", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Deposit Tests
+// Wrap Tests (USDC -> cUSDC, no FHE encryption)
 // ---------------------------------------------------------------------------
 
-describe("deposit script", () => {
+describe("wrap script", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockApprove.mockResolvedValue({
       wait: vi.fn().mockResolvedValue({}),
     });
-    mockDeposit.mockResolvedValue({
+    mockWrap.mockResolvedValue({
       wait: vi.fn().mockResolvedValue({
         hash: "0xabc123",
         blockNumber: 12345,
@@ -143,25 +152,32 @@ describe("deposit script", () => {
     });
   });
 
-  it("deposits USDC successfully", async () => {
-    const raw = await runDeposit({ amount: "2" });
+  it("wraps USDC successfully", async () => {
+    const raw = await runWrap({ amount: "2" });
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(true);
-    expect(data.action).toBe("deposit");
+    expect(data.action).toBe("wrap");
     expect(data.amount).toBe("2");
     expect(data.txHash).toBe("0xabc123");
     expect(data.blockNumber).toBe(12345);
-    expect(mockDeposit).toHaveBeenCalledWith(2_000_000n);
+    expect(mockApprove).toHaveBeenCalled();
+    expect(mockWrap).toHaveBeenCalledWith(
+      "0x1234567890abcdef1234567890abcdef12345678",
+      2_000_000n
+    );
   });
 
-  it("deposits fractional USDC", async () => {
-    await runDeposit({ amount: "0.5" });
-    expect(mockDeposit).toHaveBeenCalledWith(500_000n);
+  it("wraps fractional USDC", async () => {
+    await runWrap({ amount: "0.5" });
+    expect(mockWrap).toHaveBeenCalledWith(
+      "0x1234567890abcdef1234567890abcdef12345678",
+      500_000n
+    );
   });
 
   it("fails when amount is missing", async () => {
-    const raw = await runDeposit({});
+    const raw = await runWrap({});
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(false);
@@ -169,7 +185,7 @@ describe("deposit script", () => {
   });
 
   it("fails when amount is negative", async () => {
-    const raw = await runDeposit({ amount: "-1" });
+    const raw = await runWrap({ amount: "-1" });
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(false);
@@ -177,17 +193,17 @@ describe("deposit script", () => {
   });
 
   it("fails when amount is not a number", async () => {
-    const raw = await runDeposit({ amount: "abc" });
+    const raw = await runWrap({ amount: "abc" });
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(false);
     expect(data.error).toContain("Invalid amount");
   });
 
-  it("handles deposit error gracefully", async () => {
-    mockDeposit.mockRejectedValueOnce(new Error("Insufficient USDC balance"));
+  it("handles wrap error gracefully", async () => {
+    mockWrap.mockRejectedValueOnce(new Error("Insufficient USDC balance"));
 
-    const raw = await runDeposit({ amount: "100" });
+    const raw = await runWrap({ amount: "100" });
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(false);
@@ -196,16 +212,22 @@ describe("deposit script", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Pay Tests (with fhevmjs encryption)
+// Pay Tests (with fhevmjs encryption + verifier)
 // ---------------------------------------------------------------------------
 
 describe("pay script", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockPay.mockResolvedValue({
+    mockConfidentialTransfer.mockResolvedValue({
       wait: vi.fn().mockResolvedValue({
         hash: "0xdef456",
         blockNumber: 12346,
+      }),
+    });
+    mockRecordPayment.mockResolvedValue({
+      wait: vi.fn().mockResolvedValue({
+        hash: "0xverifier789",
+        blockNumber: 12347,
       }),
     });
   });
@@ -222,15 +244,19 @@ describe("pay script", () => {
     expect(data.amount).toBe("1");
     expect(data.to).toBe("0x1234567890abcdef1234567890abcdef12345678");
     expect(data.txHash).toBe("0xdef456");
+    expect(data.verifierTxHash).toBe("0xverifier789");
     expect(data.nonce).toBeDefined();
-    // Verify pool.pay was called with encrypted handles from fhevmjs
-    expect(mockPay).toHaveBeenCalledWith(
+    // Verify token.confidentialTransfer was called with encrypted handles from fhevmjs
+    expect(mockConfidentialTransfer).toHaveBeenCalledWith(
       "0x1234567890abcdef1234567890abcdef12345678",
       "0x" + "ff".repeat(32),
-      "0x" + "ee".repeat(64),
-      1_000_000n,
-      expect.any(String),
-      expect.any(String) // memo (ethers.ZeroHash)
+      "0x" + "ee".repeat(64)
+    );
+    // Verify verifier.recordPayment was called
+    expect(mockRecordPayment).toHaveBeenCalledWith(
+      "0x1234567890abcdef1234567890abcdef12345678",
+      "0x1234567890abcdef1234567890abcdef12345678",
+      expect.any(String) // nonce
     );
   });
 
@@ -296,7 +322,7 @@ describe("pay script", () => {
   });
 
   it("handles pay error gracefully", async () => {
-    mockPay.mockRejectedValueOnce(new Error("Execution reverted"));
+    mockConfidentialTransfer.mockRejectedValueOnce(new Error("Execution reverted"));
 
     const raw = await runPay({
       amount: "1",
@@ -310,45 +336,47 @@ describe("pay script", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Withdraw Tests (with fhevmjs encryption)
+// Unwrap Tests (cUSDC -> USDC, with fhevmjs encryption)
 // ---------------------------------------------------------------------------
 
-describe("withdraw script", () => {
+describe("unwrap script", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockRequestWithdraw.mockResolvedValue({
+    mockUnwrap.mockResolvedValue({
       wait: vi.fn().mockResolvedValue({
         hash: "0x789xyz",
-        blockNumber: 12347,
+        blockNumber: 12348,
       }),
     });
   });
 
-  it("encrypts and requests withdrawal successfully", async () => {
-    const raw = await runWithdraw({ amount: "1" });
+  it("encrypts and requests unwrap successfully", async () => {
+    const raw = await runUnwrap({ amount: "1" });
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(true);
-    expect(data.action).toBe("withdraw_requested");
+    expect(data.action).toBe("unwrap_requested");
     expect(data.amount).toBe("1");
     expect(data.txHash).toBe("0x789xyz");
     expect(data.note).toContain("KMS");
-    // Verify requestWithdraw was called with encrypted handles
-    expect(mockRequestWithdraw).toHaveBeenCalledWith(
+    // Verify unwrap was called with encrypted handles
+    expect(mockUnwrap).toHaveBeenCalledWith(
+      "0x1234567890abcdef1234567890abcdef12345678",
+      "0x1234567890abcdef1234567890abcdef12345678",
       "0x" + "ff".repeat(32),
       "0x" + "ee".repeat(64)
     );
   });
 
-  it("calls fhevmjs createEncryptedInput for withdrawal", async () => {
-    await runWithdraw({ amount: "5" });
+  it("calls fhevmjs createEncryptedInput for unwrap", async () => {
+    await runUnwrap({ amount: "5" });
     expect(mockCreateEncryptedInput).toHaveBeenCalled();
     expect(mockAdd64).toHaveBeenCalledWith(5_000_000n);
     expect(mockEncrypt).toHaveBeenCalled();
   });
 
   it("fails when amount is missing", async () => {
-    const raw = await runWithdraw({});
+    const raw = await runUnwrap({});
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(false);
@@ -356,7 +384,7 @@ describe("withdraw script", () => {
   });
 
   it("fails with negative amount", async () => {
-    const raw = await runWithdraw({ amount: "-1" });
+    const raw = await runUnwrap({ amount: "-1" });
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(false);
@@ -364,21 +392,21 @@ describe("withdraw script", () => {
   });
 
   it("fails with non-numeric amount", async () => {
-    const raw = await runWithdraw({ amount: "abc" });
+    const raw = await runUnwrap({ amount: "abc" });
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(false);
     expect(data.error).toContain("Invalid amount");
   });
 
-  it("handles withdrawal error gracefully", async () => {
-    mockRequestWithdraw.mockRejectedValueOnce(new Error("Already pending withdrawal"));
+  it("handles unwrap error gracefully", async () => {
+    mockUnwrap.mockRejectedValueOnce(new Error("Insufficient cUSDC balance"));
 
-    const raw = await runWithdraw({ amount: "1" });
+    const raw = await runUnwrap({ amount: "1" });
     const data = JSON.parse(raw);
 
     expect(data.ok).toBe(false);
-    expect(data.error).toContain("Already pending withdrawal");
+    expect(data.error).toContain("Insufficient cUSDC balance");
   });
 });
 
@@ -389,10 +417,9 @@ describe("withdraw script", () => {
 describe("info script", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIsInitialized.mockResolvedValue(true);
   });
 
-  it("returns pool and wallet info", async () => {
+  it("returns token, verifier and wallet info", async () => {
     const raw = await runInfo();
     const data = JSON.parse(raw);
 
@@ -400,7 +427,9 @@ describe("info script", () => {
     expect(data.action).toBe("info");
     expect(data.network).toBe("Ethereum Sepolia");
     expect(data.walletAddress).toBe("0x1234567890abcdef1234567890abcdef12345678");
-    expect(data.poolAddress).toBeDefined();
+    expect(data.tokenAddress).toBeDefined();
+    expect(data.verifierAddress).toBeDefined();
+    expect(data.poolAddress).toBeUndefined();
     expect(data.scheme).toBe("fhe-confidential-v1");
   });
 

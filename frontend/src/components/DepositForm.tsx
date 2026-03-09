@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 
 interface Props {
-  onDeposit: (amount: string) => Promise<void>;
+  onWrap: (amount: string) => Promise<void>;
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -36,28 +36,29 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 14,
     fontWeight: 600,
   },
+  note: { fontSize: 12, color: "#666", marginTop: 8 },
   error: { color: "#ff6b6b", fontSize: 12, marginTop: 4 },
 };
 
-export default function DepositForm({ onDeposit }: Props) {
+export default function WrapForm({ onWrap }: Props) {
   const [amount, setAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const handleDeposit = async () => {
+  const handleWrap = async () => {
     const num = parseFloat(amount);
     if (isNaN(num) || num <= 0) {
       setError("Amount must be a positive number");
       return;
     }
-    if (num < 0.01) {
-      setError("Minimum deposit is 0.01 USDC");
+    if (num < 0.02) {
+      setError("Minimum wrap is 0.02 USDC (fee: 0.01 USDC)");
       return;
     }
     setError("");
     setLoading(true);
     try {
-      await onDeposit(amount);
+      await onWrap(amount);
       setAmount("");
     } finally {
       setLoading(false);
@@ -66,27 +67,28 @@ export default function DepositForm({ onDeposit }: Props) {
 
   return (
     <div>
-      <div style={styles.label}>Deposit USDC</div>
+      <div style={styles.label}>Wrap USDC to cUSDC</div>
       <div style={styles.row}>
         <input
           style={styles.input}
           placeholder="Amount (e.g. 10)"
           type="number"
           step="0.01"
-          min="0.01"
+          min="0.02"
           value={amount}
           onChange={(e) => { setAmount(e.target.value); setError(""); }}
           disabled={loading}
         />
         <button
           style={loading ? styles.btnDisabled : styles.btn}
-          onClick={handleDeposit}
+          onClick={handleWrap}
           disabled={loading}
         >
-          {loading ? "Depositing..." : "Deposit"}
+          {loading ? "Wrapping..." : "Wrap"}
         </button>
       </div>
       {error && <div style={styles.error}>{error}</div>}
+      <div style={styles.note}>Converts public USDC to encrypted cUSDC. Fee: max(0.1%, 0.01 USDC).</div>
     </div>
   );
 }
