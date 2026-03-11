@@ -59,6 +59,28 @@ const VERIFIER_ABI = [
   "event BatchPaymentRecorded(address indexed payer, address indexed server, bytes32 indexed nonce, uint32 requestCount, uint64 pricePerRequest)",
 ];
 
+const ACP_ABI = [
+  "function createJob(address provider, address evaluator, uint256 expiredAt, string description, address hook) returns (uint256)",
+  "function setProvider(uint256 jobId, address provider) external",
+  "function setBudget(uint256 jobId, uint256 amount) external",
+  "function fund(uint256 jobId, uint256 expectedBudget) external",
+  "function submit(uint256 jobId, bytes32 deliverable) external",
+  "function complete(uint256 jobId, bytes32 reason) external",
+  "function reject(uint256 jobId, bytes32 reason) external",
+  "function claimRefund(uint256 jobId) external",
+  "function getJob(uint256 jobId) view returns (tuple(address client, address provider, address evaluator, string description, uint256 budget, uint256 expiredAt, uint8 status, address hook, bytes32 deliverable))",
+  "function treasury() view returns (address)",
+  "function paymentToken() view returns (address)",
+  "function PLATFORM_FEE_BPS() view returns (uint256)",
+  "event JobCreated(uint256 indexed jobId, address indexed client, address indexed provider, address evaluator, uint256 expiredAt)",
+  "event JobFunded(uint256 indexed jobId, address indexed client, uint256 amount)",
+  "event JobSubmitted(uint256 indexed jobId, address indexed provider, bytes32 deliverable)",
+  "event JobCompleted(uint256 indexed jobId, address indexed evaluator, bytes32 reason)",
+  "event PaymentReleased(uint256 indexed jobId, address indexed provider, uint256 amount)",
+  "event JobRejected(uint256 indexed jobId, address indexed rejector, bytes32 reason)",
+  "event Refunded(uint256 indexed jobId, address indexed client, uint256 amount)",
+];
+
 describe("Sepolia On-Chain Integration", function () {
   let signer: Signer;
   let signerAddress: string;
@@ -67,19 +89,16 @@ describe("Sepolia On-Chain Integration", function () {
   let verifier: Contract;
 
   before(async function () {
-    // Get signer from hardhat config (uses PRIVATE_KEY from .env)
     const signers = await ethers.getSigners();
     signer = signers[0];
     signerAddress = await signer.getAddress();
 
     console.log(`    Signer: ${signerAddress}`);
 
-    // Connect to deployed contracts
     usdc = new ethers.Contract(MOCK_USDC_ADDRESS, USDC_ABI, signer);
     cUSDC = new ethers.Contract(CONFIDENTIAL_USDC_ADDRESS, CUSDC_ABI, signer);
     verifier = new ethers.Contract(X402_VERIFIER_ADDRESS, VERIFIER_ABI, signer);
 
-    // Check ETH balance
     const ethBalance = await ethers.provider.getBalance(signerAddress);
     console.log(`    ETH Balance: ${ethers.formatEther(ethBalance)} ETH`);
 
@@ -153,12 +172,21 @@ describe("Sepolia On-Chain Integration", function () {
   // 2. MockUSDC Operations
   // ===========================================================================
 
-  describe("2. MockUSDC Balances", function () {
+  describe("2. MockUSDC Balances & Minting", function () {
     it("reads USDC balance of signer", async function () {
       const balance = await usdc.balanceOf(signerAddress);
       console.log(`      USDC Balance: ${ethers.formatUnits(balance, 6)} USDC`);
-      // Balance could be anything, just verify it returns
       expect(balance).to.be.a("bigint");
+    });
+
+    it("mints USDC and balance increases", async function () {
+      const before = await usdc.balanceOf(signerAddress);
+      const mintAmount = 1_000_000n; // 1 USDC
+      const tx = await usdc.mint(signerAddress, mintAmount);
+      await tx.wait();
+      const after = await usdc.balanceOf(signerAddress);
+      console.log(`      Minted: ${ethers.formatUnits(mintAmount, 6)} USDC`);
+      expect(after - before).to.equal(mintAmount);
     });
   });
 
@@ -191,7 +219,7 @@ describe("Sepolia On-Chain Integration", function () {
       expect(receipt.status).to.equal(1);
     });
 
-    it("wraps USDC into cUSDC", async function () {
+    it("wraps USDC into cUSDC and collects fee", async function () {
       const feesBefore = await cUSDC.accumulatedFees();
 
       const tx = await cUSDC.wrap(signerAddress, WRAP_AMOUNT);
@@ -210,13 +238,46 @@ describe("Sepolia On-Chain Integration", function () {
       expect(feeDelta).to.be.gte(10_000n);
     });
 
+    it("fee is min 0.01 USDC for small amounts", async function () {
+      // Wrap exactly 0.10 USDC → fee should be min(0.1*0.001=0.0001, 0.01) = 0.01 USDC
+      const feesBefore = await cUSDC.accumulatedFees();
+
+      const smallAmount = 100_000n; // 0.10 USDC
+      const appTx = await usdc.approve(CONFIDENTIAL_USDC_ADDRESS, smallAmount);
+      await appTx.wait();
+      const wrapTx = await cUSDC.wrap(signerAddress, smallAmount);
+      await wrapTx.wait();
+
+      const feesAfter = await cUSDC.accumulatedFees();
+      const fee = feesAfter - feesBefore;
+      console.log(`      Fee for 0.10 USDC wrap: ${ethers.formatUnits(fee, 6)} USDC`);
+      // 0.10 * 0.1% = 0.0001, but min fee is 0.01
+      expect(fee).to.equal(10_000n);
+    });
+
+    it("fee is 0.1% for large amounts", async function () {
+      const feesBefore = await cUSDC.accumulatedFees();
+
+      const largeAmount = 100_000_000n; // 100 USDC
+      const mintTx = await usdc.mint(signerAddress, largeAmount);
+      await mintTx.wait();
+      const appTx = await usdc.approve(CONFIDENTIAL_USDC_ADDRESS, largeAmount);
+      await appTx.wait();
+      const wrapTx = await cUSDC.wrap(signerAddress, largeAmount);
+      await wrapTx.wait();
+
+      const feesAfter = await cUSDC.accumulatedFees();
+      const fee = feesAfter - feesBefore;
+      console.log(`      Fee for 100 USDC wrap: ${ethers.formatUnits(fee, 6)} USDC`);
+      // 100 * 0.1% = 0.10 USDC = 100_000 raw
+      expect(fee).to.equal(100_000n);
+    });
+
     it("signer has encrypted balance after wrap", async function () {
       const handle = await cUSDC.confidentialBalanceOf(signerAddress);
       const zeroHandle = "0x" + "00".repeat(32);
 
       console.log(`      Encrypted balance handle: ${handle}`);
-
-      // After wrapping, the encrypted balance should be non-zero
       expect(handle).to.not.equal(zeroHandle);
     });
   });
@@ -230,7 +291,7 @@ describe("Sepolia On-Chain Integration", function () {
 
     it("records a payment with unique nonce", async function () {
       testNonce = ethers.hexlify(ethers.randomBytes(32));
-      const server = signerAddress; // use self as server for test
+      const server = signerAddress;
       const minPrice = 50_000n; // 0.05 USDC
 
       const tx = await verifier.recordPayment(server, testNonce, minPrice);
@@ -269,11 +330,27 @@ describe("Sepolia On-Chain Integration", function () {
         expect.fail("Should have reverted");
       } catch (e: any) {
         console.log(`      Correctly reverted: ${e.message.slice(0, 80)}...`);
-        // Sepolia RPC may not include custom error name, just "execution reverted"
         expect(
           e.message.includes("NonceAlreadyUsed") || e.message.includes("execution reverted")
         ).to.equal(true);
       }
+    });
+
+    it("records 5 sequential payments with different nonces", async function () {
+      const nonces: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const nonce = ethers.hexlify(ethers.randomBytes(32));
+        nonces.push(nonce);
+        const tx = await verifier.recordPayment(signerAddress, nonce, 10_000n * BigInt(i + 1));
+        await tx.wait();
+      }
+
+      // Verify all nonces are used
+      for (const n of nonces) {
+        const used = await verifier.usedNonces(n);
+        expect(used).to.equal(true);
+      }
+      console.log(`      5 sequential payments recorded, all nonces verified`);
     });
   });
 
@@ -317,9 +394,22 @@ describe("Sepolia On-Chain Integration", function () {
       }
       expect(found).to.equal(true, "BatchPaymentRecorded event not found");
 
-      // Verify nonce is used
       const used = await verifier.usedNonces(batchNonce);
       expect(used).to.equal(true);
+    });
+
+    it("batch nonce rejects zero request count", async function () {
+      const nonce = ethers.hexlify(ethers.randomBytes(32));
+      try {
+        const tx = await verifier.recordBatchPayment(signerAddress, nonce, 0, 100_000n);
+        await tx.wait();
+        expect.fail("Should have reverted");
+      } catch (e: any) {
+        console.log(`      Correctly reverted for zero requestCount`);
+        expect(
+          e.message.includes("ZeroRequestCount") || e.message.includes("execution reverted")
+        ).to.equal(true);
+      }
     });
   });
 
@@ -329,8 +419,7 @@ describe("Sepolia On-Chain Integration", function () {
 
   describe("6. ERC-7984 Operator", function () {
     it("setOperator grants operator role to verifier", async function () {
-      // Set verifier as operator with far-future expiry
-      const farFuture = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60; // 1 year
+      const farFuture = Math.floor(Date.now() / 1000) + 365 * 24 * 60 * 60;
       const tx = await cUSDC.setOperator(X402_VERIFIER_ADDRESS, farFuture);
       const receipt = await tx.wait();
 
@@ -355,15 +444,289 @@ describe("Sepolia On-Chain Integration", function () {
       const isOp = await cUSDC.isOperator(signerAddress, random);
       expect(isOp).to.equal(false);
     });
+
+    it("setOperator with expiry 0 revokes operator", async function () {
+      const random = ethers.Wallet.createRandom().address;
+      // Grant then revoke
+      const grantTx = await cUSDC.setOperator(random, Math.floor(Date.now() / 1000) + 3600);
+      await grantTx.wait();
+      let isOp = await cUSDC.isOperator(signerAddress, random);
+      expect(isOp).to.equal(true);
+
+      const revokeTx = await cUSDC.setOperator(random, 0);
+      await revokeTx.wait();
+      isOp = await cUSDC.isOperator(signerAddress, random);
+      expect(isOp).to.equal(false);
+      console.log(`      Operator granted then revoked successfully`);
+    });
   });
 
   // ===========================================================================
-  // 7. Gas Cost Report
+  // 7. ACP Job Lifecycle (Deploy fresh ACP on Sepolia)
   // ===========================================================================
 
-  describe("7. Gas Cost Summary", function () {
+  describe("7. ACP Job Lifecycle (fresh deploy)", function () {
+    let acp: Contract;
+    let acpAddress: string;
+    let jobId: bigint;
+
+    before(async function () {
+      // Deploy ACP using USDC as payment token
+      const ACP = await ethers.getContractFactory("AgenticCommerceProtocol");
+      const acpContract = await ACP.deploy(MOCK_USDC_ADDRESS, signerAddress);
+      await acpContract.waitForDeployment();
+      acpAddress = await acpContract.getAddress();
+      acp = new ethers.Contract(acpAddress, ACP_ABI, signer);
+      console.log(`      ACP deployed at: ${acpAddress}`);
+    });
+
+    it("ACP has correct paymentToken and treasury", async function () {
+      const pt = await acp.paymentToken();
+      const t = await acp.treasury();
+      const fee = await acp.PLATFORM_FEE_BPS();
+
+      console.log(`      Payment Token: ${pt}`);
+      console.log(`      Treasury: ${t}`);
+      console.log(`      Platform Fee: ${fee} bps (${Number(fee) / 100}%)`);
+
+      expect(pt.toLowerCase()).to.equal(MOCK_USDC_ADDRESS.toLowerCase());
+      expect(t.toLowerCase()).to.equal(signerAddress.toLowerCase());
+      expect(fee).to.equal(100n);
+    });
+
+    it("creates a job", async function () {
+      const evaluator = ethers.Wallet.createRandom().address;
+      const expiry = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60; // 1 week
+
+      const tx = await acp.createJob(
+        ethers.ZeroAddress, // provider TBD
+        evaluator,
+        expiry,
+        "Test AI task on Sepolia",
+        ethers.ZeroAddress // no hook
+      );
+      const receipt = await tx.wait();
+
+      // Parse event to get jobId
+      const iface = new ethers.Interface(ACP_ABI);
+      for (const log of receipt.logs) {
+        try {
+          const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
+          if (parsed?.name === "JobCreated") {
+            jobId = parsed.args[0];
+            console.log(`      JobCreated: jobId=${jobId}`);
+          }
+        } catch { /* skip */ }
+      }
+
+      expect(jobId).to.be.a("bigint");
+      console.log(`      Gas used: ${receipt.gasUsed.toString()}`);
+    });
+
+    it("reads job struct", async function () {
+      const job = await acp.getJob(jobId);
+      console.log(`      Client: ${job.client}`);
+      console.log(`      Status: ${job.status} (0=Open)`);
+      console.log(`      Description: ${job.description}`);
+
+      expect(job.client.toLowerCase()).to.equal(signerAddress.toLowerCase());
+      expect(job.status).to.equal(0n); // Open
+    });
+
+    it("sets provider and budget", async function () {
+      const provider = ethers.Wallet.createRandom().address;
+      const provTx = await acp.setProvider(jobId, provider);
+      await provTx.wait();
+
+      const budget = 10_000_000n; // 10 USDC
+      const budTx = await acp.setBudget(jobId, budget);
+      await budTx.wait();
+
+      const job = await acp.getJob(jobId);
+      expect(job.provider.toLowerCase()).to.equal(provider.toLowerCase());
+      expect(job.budget).to.equal(budget);
+      console.log(`      Provider: ${provider}`);
+      console.log(`      Budget: ${ethers.formatUnits(budget, 6)} USDC`);
+    });
+
+    it("funds the job (escrow)", async function () {
+      const job = await acp.getJob(jobId);
+
+      // Approve ACP to spend USDC
+      const appTx = await usdc.approve(acpAddress, job.budget);
+      await appTx.wait();
+
+      const fundTx = await acp.fund(jobId, job.budget);
+      const receipt = await fundTx.wait();
+
+      const updatedJob = await acp.getJob(jobId);
+      expect(updatedJob.status).to.equal(1n); // Funded
+      console.log(`      Job funded, status: Funded`);
+      console.log(`      Gas used: ${receipt.gasUsed.toString()}`);
+    });
+
+    it("client rejects funded job and gets refund", async function () {
+      const balBefore = await usdc.balanceOf(signerAddress);
+
+      const reason = ethers.encodeBytes32String("Test rejection");
+      const tx = await acp.reject(jobId, reason);
+      const receipt = await tx.wait();
+
+      const balAfter = await usdc.balanceOf(signerAddress);
+      const job = await acp.getJob(jobId);
+
+      expect(job.status).to.equal(4n); // Rejected
+      expect(balAfter - balBefore).to.equal(job.budget);
+      console.log(`      Job rejected, refund: ${ethers.formatUnits(job.budget, 6)} USDC`);
+      console.log(`      Gas used: ${receipt.gasUsed.toString()}`);
+    });
+  });
+
+  // ===========================================================================
+  // 8. ACP Full Lifecycle — Complete Flow
+  // ===========================================================================
+
+  describe("8. ACP Complete Flow (create → fund → submit → complete)", function () {
+    let acp: Contract;
+    let acpAddress: string;
+    let jobId: bigint;
+    let providerWallet: any;
+    let evaluatorWallet: any;
+
+    before(async function () {
+      const ACP = await ethers.getContractFactory("AgenticCommerceProtocol");
+      const acpContract = await ACP.deploy(MOCK_USDC_ADDRESS, signerAddress);
+      await acpContract.waitForDeployment();
+      acpAddress = await acpContract.getAddress();
+      acp = new ethers.Contract(acpAddress, ACP_ABI, signer);
+
+      // Create funded wallets for provider and evaluator
+      providerWallet = ethers.Wallet.createRandom().connect(ethers.provider);
+      evaluatorWallet = ethers.Wallet.createRandom().connect(ethers.provider);
+
+      // Fund them with ETH for gas
+      const fundProv = await signer.sendTransaction({
+        to: providerWallet.address,
+        value: ethers.parseEther("0.01"),
+      });
+      await fundProv.wait();
+      const fundEval = await signer.sendTransaction({
+        to: evaluatorWallet.address,
+        value: ethers.parseEther("0.01"),
+      });
+      await fundEval.wait();
+
+      console.log(`      ACP: ${acpAddress}`);
+      console.log(`      Provider: ${providerWallet.address}`);
+      console.log(`      Evaluator: ${evaluatorWallet.address}`);
+    });
+
+    it("creates job with provider and evaluator", async function () {
+      const expiry = Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60;
+      const tx = await acp.createJob(
+        providerWallet.address,
+        evaluatorWallet.address,
+        expiry,
+        "Full lifecycle test: AI image generation",
+        ethers.ZeroAddress
+      );
+      const receipt = await tx.wait();
+
+      const iface = new ethers.Interface(ACP_ABI);
+      for (const log of receipt.logs) {
+        try {
+          const parsed = iface.parseLog({ topics: [...log.topics], data: log.data });
+          if (parsed?.name === "JobCreated") jobId = parsed.args[0];
+        } catch { /* skip */ }
+      }
+      console.log(`      Job #${jobId} created`);
+    });
+
+    it("sets budget and funds", async function () {
+      const budget = 5_000_000n; // 5 USDC
+      await (await acp.setBudget(jobId, budget)).wait();
+      await (await usdc.approve(acpAddress, budget)).wait();
+      await (await acp.fund(jobId, budget)).wait();
+
+      const job = await acp.getJob(jobId);
+      expect(job.status).to.equal(1n); // Funded
+      console.log(`      Funded: 5 USDC escrowed`);
+    });
+
+    it("provider submits deliverable", async function () {
+      const acpAsProvider = new ethers.Contract(acpAddress, ACP_ABI, providerWallet);
+      const deliverable = ethers.encodeBytes32String("ipfs://QmTest123");
+      const tx = await acpAsProvider.submit(jobId, deliverable);
+      const receipt = await tx.wait();
+
+      const job = await acp.getJob(jobId);
+      expect(job.status).to.equal(2n); // Submitted
+      console.log(`      Submitted: ${deliverable}`);
+      console.log(`      Gas used: ${receipt.gasUsed.toString()}`);
+    });
+
+    it("evaluator completes job, provider gets paid, treasury gets fee", async function () {
+      const providerBalBefore = await usdc.balanceOf(providerWallet.address);
+      const treasuryBalBefore = await usdc.balanceOf(signerAddress);
+
+      const acpAsEvaluator = new ethers.Contract(acpAddress, ACP_ABI, evaluatorWallet);
+      const reason = ethers.encodeBytes32String("Excellent work");
+      const tx = await acpAsEvaluator.complete(jobId, reason);
+      const receipt = await tx.wait();
+
+      const job = await acp.getJob(jobId);
+      expect(job.status).to.equal(3n); // Completed
+
+      const providerBalAfter = await usdc.balanceOf(providerWallet.address);
+      const treasuryBalAfter = await usdc.balanceOf(signerAddress);
+
+      const payout = providerBalAfter - providerBalBefore;
+      const fee = treasuryBalAfter - treasuryBalBefore;
+
+      console.log(`      Job completed!`);
+      console.log(`      Provider payout: ${ethers.formatUnits(payout, 6)} USDC`);
+      console.log(`      Treasury fee: ${ethers.formatUnits(fee, 6)} USDC`);
+      console.log(`      Gas used: ${receipt.gasUsed.toString()}`);
+
+      // Budget was 5 USDC, fee is 1% = 0.05 USDC, payout = 4.95 USDC
+      expect(payout).to.equal(4_950_000n);
+      expect(fee).to.equal(50_000n);
+    });
+  });
+
+  // ===========================================================================
+  // 9. Fee Accumulation Consistency
+  // ===========================================================================
+
+  describe("9. Fee Accumulation Consistency", function () {
+    it("accumulated fees increase monotonically across wraps", async function () {
+      const fees0 = await cUSDC.accumulatedFees();
+
+      // Wrap 1: small (min fee)
+      await (await usdc.mint(signerAddress, 1_000_000n)).wait();
+      await (await usdc.approve(CONFIDENTIAL_USDC_ADDRESS, 100_000n)).wait();
+      await (await cUSDC.wrap(signerAddress, 100_000n)).wait();
+      const fees1 = await cUSDC.accumulatedFees();
+      expect(fees1).to.be.gt(fees0);
+
+      // Wrap 2: medium
+      await (await usdc.approve(CONFIDENTIAL_USDC_ADDRESS, 500_000n)).wait();
+      await (await cUSDC.wrap(signerAddress, 500_000n)).wait();
+      const fees2 = await cUSDC.accumulatedFees();
+      expect(fees2).to.be.gt(fees1);
+
+      console.log(`      fees0: ${ethers.formatUnits(fees0, 6)}`);
+      console.log(`      fees1: ${ethers.formatUnits(fees1, 6)} (+${ethers.formatUnits(fees1 - fees0, 6)})`);
+      console.log(`      fees2: ${ethers.formatUnits(fees2, 6)} (+${ethers.formatUnits(fees2 - fees1, 6)})`);
+    });
+  });
+
+  // ===========================================================================
+  // 10. Gas Cost Report
+  // ===========================================================================
+
+  describe("10. Gas Cost Summary", function () {
     it("reports gas costs for key operations", async function () {
-      // Run one more wrap to measure gas accurately
       const balance = await usdc.balanceOf(signerAddress);
       if (balance < 100_000n) {
         const mintTx = await usdc.mint(signerAddress, 10_000_000n);
@@ -388,6 +751,11 @@ describe("Sepolia On-Chain Integration", function () {
       const bpTx = await verifier.recordBatchPayment(signerAddress, batchNonce, 10, 100_000n);
       const bpReceipt = await bpTx.wait();
 
+      // Measure setOperator
+      const random = ethers.Wallet.createRandom().address;
+      const opTx = await cUSDC.setOperator(random, Math.floor(Date.now() / 1000) + 3600);
+      const opReceipt = await opTx.wait();
+
       console.log(`\n      ┌─────────────────────────┬──────────────┐`);
       console.log(`      │ Operation               │ Gas Used     │`);
       console.log(`      ├─────────────────────────┼──────────────┤`);
@@ -395,6 +763,7 @@ describe("Sepolia On-Chain Integration", function () {
       console.log(`      │ cUSDC wrap              │ ${wrapReceipt.gasUsed.toString().padStart(12)} │`);
       console.log(`      │ recordPayment           │ ${rpReceipt.gasUsed.toString().padStart(12)} │`);
       console.log(`      │ recordBatchPayment      │ ${bpReceipt.gasUsed.toString().padStart(12)} │`);
+      console.log(`      │ setOperator             │ ${opReceipt.gasUsed.toString().padStart(12)} │`);
       console.log(`      └─────────────────────────┴──────────────┘`);
     });
   });

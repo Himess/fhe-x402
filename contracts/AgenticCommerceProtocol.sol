@@ -39,6 +39,8 @@ contract AgenticCommerceProtocol is IACP, Ownable2Step, ReentrancyGuard, Pausabl
 
     constructor(IERC20 _paymentToken, address _treasury) Ownable(msg.sender) {
         if (address(_paymentToken) == address(0)) revert ZeroAddress();
+        // L-5: Verify paymentToken is a deployed contract (not an EOA)
+        if (address(_paymentToken).code.length == 0) revert InvalidPaymentToken();
         if (_treasury == address(0)) revert ZeroAddress();
         paymentToken = _paymentToken;
         treasury = _treasury;
@@ -87,7 +89,7 @@ contract AgenticCommerceProtocol is IACP, Ownable2Step, ReentrancyGuard, Pausabl
         job.hook = hook;
 
         if (hook != address(0)) {
-            try IACPHook(hook).afterAction{gas: 100_000}(jobId, this.createJob.selector, abi.encode(msg.sender, provider, evaluator)) {} catch {}
+            try IACPHook(hook).afterAction{gas: 100_000}(jobId, this.createJob.selector, abi.encode(msg.sender, provider, evaluator)) {} catch { emit HookFailed(jobId, this.createJob.selector); }
         }
 
         emit JobCreated(jobId, msg.sender, provider, evaluator, expiredAt);
@@ -132,7 +134,7 @@ contract AgenticCommerceProtocol is IACP, Ownable2Step, ReentrancyGuard, Pausabl
         paymentToken.safeTransferFrom(msg.sender, address(this), job.budget);
 
         if (job.hook != address(0)) {
-            try IACPHook(job.hook).afterAction{gas: 100_000}(jobId, this.fund.selector, abi.encode(msg.sender, job.budget)) {} catch {}
+            try IACPHook(job.hook).afterAction{gas: 100_000}(jobId, this.fund.selector, abi.encode(msg.sender, job.budget)) {} catch { emit HookFailed(jobId, this.fund.selector); }
         }
 
         emit JobFunded(jobId, msg.sender, job.budget);
@@ -150,7 +152,7 @@ contract AgenticCommerceProtocol is IACP, Ownable2Step, ReentrancyGuard, Pausabl
         job.deliverable = deliverable;
 
         if (job.hook != address(0)) {
-            try IACPHook(job.hook).afterAction{gas: 100_000}(jobId, this.submit.selector, abi.encode(msg.sender, deliverable)) {} catch {}
+            try IACPHook(job.hook).afterAction{gas: 100_000}(jobId, this.submit.selector, abi.encode(msg.sender, deliverable)) {} catch { emit HookFailed(jobId, this.submit.selector); }
         }
 
         emit JobSubmitted(jobId, msg.sender, deliverable);
@@ -179,7 +181,7 @@ contract AgenticCommerceProtocol is IACP, Ownable2Step, ReentrancyGuard, Pausabl
         }
 
         if (job.hook != address(0)) {
-            try IACPHook(job.hook).afterAction{gas: 100_000}(jobId, this.complete.selector, abi.encode(msg.sender, reason, payout, fee)) {} catch {}
+            try IACPHook(job.hook).afterAction{gas: 100_000}(jobId, this.complete.selector, abi.encode(msg.sender, reason, payout, fee)) {} catch { emit HookFailed(jobId, this.complete.selector); }
         }
 
         emit JobCompleted(jobId, msg.sender, reason);
@@ -213,7 +215,7 @@ contract AgenticCommerceProtocol is IACP, Ownable2Step, ReentrancyGuard, Pausabl
         }
 
         if (job.hook != address(0)) {
-            try IACPHook(job.hook).afterAction{gas: 100_000}(jobId, this.reject.selector, abi.encode(msg.sender, reason)) {} catch {}
+            try IACPHook(job.hook).afterAction{gas: 100_000}(jobId, this.reject.selector, abi.encode(msg.sender, reason)) {} catch { emit HookFailed(jobId, this.reject.selector); }
         }
 
         emit JobRejected(jobId, msg.sender, reason);

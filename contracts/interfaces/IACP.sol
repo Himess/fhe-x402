@@ -30,8 +30,10 @@ interface IACP {
     event PaymentReleased(uint256 indexed jobId, address indexed provider, uint256 amount);
     event Refunded(uint256 indexed jobId, address indexed client, uint256 amount);
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
+    event HookFailed(uint256 indexed jobId, bytes4 indexed selector);
 
     error JobNotFound();
+    error InvalidPaymentToken();
     error Unauthorized();
     error InvalidStatus();
     error InvalidProvider();

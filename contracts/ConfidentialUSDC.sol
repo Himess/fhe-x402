@@ -6,6 +6,7 @@ import {ZamaEthereumConfig} from "@fhevm/solidity/config/ZamaConfig.sol";
 import {ERC7984} from "@openzeppelin/confidential-contracts/token/ERC7984/ERC7984.sol";
 import {ERC7984ERC20Wrapper} from "@openzeppelin/confidential-contracts/token/ERC7984/extensions/ERC7984ERC20Wrapper.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
@@ -65,6 +66,8 @@ contract ConfidentialUSDC is
         Ownable(msg.sender)
     {
         if (_treasury == address(0)) revert ZeroAddress();
+        // L-1: Ensure underlying token has 6 decimals (USDC standard)
+        if (IERC20Metadata(address(_usdc)).decimals() != 6) revert InvalidDecimals();
         treasury = _treasury;
         emit TreasuryUpdated(address(0), _treasury);
     }
@@ -171,6 +174,8 @@ contract ConfidentialUSDC is
         bytes calldata inputProof,
         bytes calldata data
     ) public override nonReentrant whenNotPaused returns (euint64 transferred) {
+        // M-2: Prevent self-transfer + callback (wastes gas, no economic purpose)
+        if (to == msg.sender) revert SelfTransfer();
         euint64 value = FHE.fromExternal(encryptedAmount, inputProof);
         transferred = _transfer(msg.sender, to, value);
 
@@ -228,15 +233,6 @@ contract ConfidentialUSDC is
     /// @notice Resume operations
     function unpause() external onlyOwner {
         _unpause();
-    }
-
-    // ═══════════════════════════════════════
-    // ERC-165 OVERRIDE
-    // ═══════════════════════════════════════
-
-    /// @dev Override supportsInterface for ERC-7984 + ERC-165
-    function supportsInterface(bytes4 interfaceId) public view virtual override returns (bool) {
-        return super.supportsInterface(interfaceId);
     }
 
     // ═══════════════════════════════════════

@@ -21,9 +21,11 @@ interface IConfidentialUSDC {
     error ZeroAddress();
     error ZeroAmount();
     error DustAmount();
+    error InvalidDecimals();
     error InsufficientFees();
     error UnwrapAlreadyRequested();
     error TransferCallbackFailed();
+    error SelfTransfer();
 
     // ═══════════════════════════════════════
     // ADMIN

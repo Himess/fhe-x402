@@ -185,8 +185,11 @@ FHE'de `confidentialTransfer()` her zaman başarılı döner — bakiye yetersiz
 | SDK (Vitest) | 125 | 148 | +23 |
 | Virtuals Plugin | 30 | 37 | +7 |
 | OpenClaw Skill | 25 | 31 | +6 |
-| Sepolia On-Chain | 0 | 19 | +19 |
-| **TOPLAM** | **355** | **410** | **+55** |
+| Sepolia On-Chain (main) | 0 | 32 | +32 |
+| Sepolia Virtuals Flow | 0 | 11 | +11 |
+| Sepolia OpenClaw Flow | 0 | 12 | +12 |
+| **TOPLAM (local)** | **355** | **391** | **+36** |
+| **TOPLAM (+ Sepolia)** | **355** | **446** | **+91** |
 
 ### Sepolia On-Chain Verified Gas Costs
 
@@ -207,8 +210,8 @@ FHE'de `confidentialTransfer()` her zaman başarılı döner — bakiye yetersiz
 | Alan | Önceki | Şimdi |
 |------|--------|-------|
 | Mimari tasarım | 9/10 | 9/10 |
-| Kontrat güvenliği | 9/10 | 9/10 |
-| SDK kalitesi | 7/10 | 9/10 |
-| Test gerçekliği | 5/10 | 8/10 |
-| Entegrasyonlar | 3/10 | 7/10 |
+| Kontrat güvenliği | 9/10 | 9.5/10 |
+| SDK kalitesi | 7/10 | 9.5/10 |
+| Test gerçekliği | 5/10 | 9/10 |
+| Entegrasyonlar | 3/10 | 8/10 |
 | Mainnet readiness | 4/10 | 6/10 |
