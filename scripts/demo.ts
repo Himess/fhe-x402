@@ -3,20 +3,22 @@ import { fhevm } from "hardhat";
 import { FhevmType } from "@fhevm/hardhat-plugin";
 
 /**
- * E2E Demo Script — FHE x402 Payment Protocol
+ * E2E Demo Script — FHE x402 Payment Protocol (V4.0 Token-Centric)
  *
  * Flow:
- * 1. Deploy MockUSDC + ConfidentialPaymentPool
- * 2. Alice deposits USDC → encrypted balance
- * 3. Alice pays Bob (encrypted amount, public minPrice)
- * 4. Query encrypted balances
- * 5. Bob requests withdrawal
+ * 1. Deploy MockUSDC + ConfidentialUSDC + X402PaymentVerifier
+ * 2. Mint USDC to Alice, approve, wrap USDC → cUSDC (shows fee)
+ * 3. Alice does confidentialTransfer to Bob (encrypted amount, FHE)
+ * 4. Record payment on verifier (recordPayment with nonce + minPrice)
+ * 5. Query encrypted balances
+ * 6. Bob requests unwrap (cUSDC → USDC)
  *
  * Run: npx hardhat run scripts/demo.ts
  */
 async function main() {
   console.log("═══════════════════════════════════════");
   console.log("  FHE x402 Payment Protocol — Demo");
+  console.log("  V4.0 Token-Centric Architecture");
   console.log("═══════════════════════════════════════\n");
 
   const signers = await ethers.getSigners();
@@ -40,92 +42,119 @@ async function main() {
   const usdc = await MockUSDC.deploy();
   await usdc.waitForDeployment();
   const usdcAddress = await usdc.getAddress();
-  console.log(`  MockUSDC: ${usdcAddress}`);
+  console.log(`  MockUSDC:            ${usdcAddress}`);
 
-  const Pool = await ethers.getContractFactory("ConfidentialPaymentPool");
-  const pool = await Pool.deploy(usdcAddress, treasury.address);
-  await pool.waitForDeployment();
-  const poolAddress = await pool.getAddress();
-  console.log(`  Pool: ${poolAddress}\n`);
+  const ConfidentialUSDC = await ethers.getContractFactory("ConfidentialUSDC");
+  const token = await ConfidentialUSDC.deploy(usdcAddress, treasury.address);
+  await token.waitForDeployment();
+  const tokenAddress = await token.getAddress();
+  console.log(`  ConfidentialUSDC:    ${tokenAddress}`);
 
-  // ═══════════════════════════════════════
-  // 2. Fund Alice & deposit
-  // ═══════════════════════════════════════
-  console.log("Step 2: Funding Alice and depositing...");
-
-  await usdc.mint(alice.address, 100_000_000n); // 100 USDC
-  await usdc.connect(alice).approve(poolAddress, 100_000_000n);
-
-  await pool.connect(alice).deposit(50_000_000); // 50 USDC
-  // Fee: max(50_000_000*10/10_000, 10_000) = max(50_000, 10_000) = 50_000
-  // Net: 49_950_000
-
-  const aliceEnc1 = await pool.balanceOf(alice.address);
-  const aliceBal1 = await fhevm.userDecryptEuint(FhevmType.euint64, aliceEnc1, poolAddress, alice);
-  console.log(`  Alice deposited 50 USDC (fee: 0.05 USDC)`);
-  console.log(`  Alice encrypted balance: ${Number(aliceBal1) / 1_000_000} USDC\n`);
+  const Verifier = await ethers.getContractFactory("X402PaymentVerifier");
+  const verifier = await Verifier.deploy(tokenAddress);
+  await verifier.waitForDeployment();
+  const verifierAddress = await verifier.getAddress();
+  console.log(`  X402PaymentVerifier: ${verifierAddress}\n`);
 
   // ═══════════════════════════════════════
-  // 3. Alice pays Bob
+  // 2. Fund Alice, approve, and wrap
   // ═══════════════════════════════════════
-  console.log("Step 3: Alice pays Bob (5 USDC encrypted)...");
+  console.log("Step 2: Funding Alice and wrapping USDC → cUSDC...");
 
-  const nonce = ethers.hexlify(ethers.randomBytes(32));
-  const input = fhevm.createEncryptedInput(poolAddress, alice.address);
-  input.add64(5_000_000n); // 5 USDC
+  const mintAmount = 100_000_000n; // 100 USDC (6 decimals)
+  const wrapAmount = 50_000_000n;  // 50 USDC
+
+  await usdc.mint(alice.address, mintAmount);
+  console.log(`  Minted ${Number(mintAmount) / 1_000_000} USDC to Alice`);
+
+  await usdc.connect(alice).approve(tokenAddress, mintAmount);
+  console.log(`  Alice approved ConfidentialUSDC to spend USDC`);
+
+  await token.connect(alice).wrap(alice.address, wrapAmount);
+  // Fee: max(50_000_000 * 10 / 10_000, 10_000) = max(50_000, 10_000) = 50_000
+  // Net cUSDC: 50_000_000 - 50_000 = 49_950_000
+  console.log(`  Wrapped 50 USDC (fee: 0.05 USDC → treasury)`);
+
+  const aliceEnc1 = await token.confidentialBalanceOf(alice.address);
+  const aliceBal1 = await fhevm.userDecryptEuint(FhevmType.euint64, aliceEnc1, tokenAddress, alice);
+  console.log(`  Alice cUSDC balance: ${Number(aliceBal1) / 1_000_000} USDC (encrypted)\n`);
+
+  // ═══════════════════════════════════════
+  // 3. Alice → Bob confidentialTransfer
+  // ═══════════════════════════════════════
+  console.log("Step 3: Alice transfers 5 cUSDC to Bob (encrypted)...");
+
+  const transferAmount = 5_000_000n; // 5 USDC
+  const input = fhevm.createEncryptedInput(tokenAddress, alice.address);
+  input.add64(transferAmount);
   const encrypted = await input.encrypt();
 
-  const tx = await pool.connect(alice).pay(
+  const transferTx = await token.connect(alice).confidentialTransfer(
     bob.address,
     encrypted.handles[0],
-    encrypted.inputProof,
-    5_000_000, // minPrice = 5 USDC
-    nonce
+    encrypted.inputProof
   );
-  const receipt = await tx.wait();
-  console.log(`  TX hash: ${tx.hash}`);
+  const transferReceipt = await transferTx.wait();
+  console.log(`  TX hash: ${transferTx.hash}`);
+  console.log(`  Gas used: ${transferReceipt!.gasUsed.toString()}`);
+  console.log(`  Transfer: 5 cUSDC (fee-free, encrypted amount)\n`);
+
+  // ═══════════════════════════════════════
+  // 4. Record payment on verifier
+  // ═══════════════════════════════════════
+  console.log("Step 4: Recording payment nonce on verifier...");
+
+  const nonce = ethers.hexlify(ethers.randomBytes(32));
+  const minPrice = 5_000_000n; // 5 USDC
+
+  const recordTx = await verifier.connect(alice).recordPayment(
+    bob.address, // server (payment recipient)
+    nonce,
+    minPrice
+  );
+  const recordReceipt = await recordTx.wait();
   console.log(`  Nonce: ${nonce}`);
+  console.log(`  MinPrice: ${Number(minPrice) / 1_000_000} USDC`);
+  console.log(`  TX hash: ${recordTx.hash}`);
+  console.log(`  Gas used: ${recordReceipt!.gasUsed.toString()}`);
 
-  // Verify PaymentExecuted event
-  const payEvent = receipt!.logs.find((log: any) => {
-    try {
-      const parsed = pool.interface.parseLog({ topics: log.topics, data: log.data });
-      return parsed?.name === "PaymentExecuted";
-    } catch {
-      return false;
-    }
-  });
-  console.log(`  PaymentExecuted event: ${payEvent ? "YES" : "NO"}\n`);
+  const nonceUsed = await verifier.usedNonces(nonce);
+  console.log(`  Nonce recorded: ${nonceUsed ? "YES" : "NO"}\n`);
 
   // ═══════════════════════════════════════
-  // 4. Query balances
+  // 5. Query encrypted balances
   // ═══════════════════════════════════════
-  console.log("Step 4: Querying encrypted balances...");
+  console.log("Step 5: Querying encrypted balances...");
 
-  const aliceEnc2 = await pool.balanceOf(alice.address);
-  const aliceBal2 = await fhevm.userDecryptEuint(FhevmType.euint64, aliceEnc2, poolAddress, alice);
-  console.log(`  Alice: ${Number(aliceBal2) / 1_000_000} USDC`);
+  const aliceEnc2 = await token.confidentialBalanceOf(alice.address);
+  const aliceBal2 = await fhevm.userDecryptEuint(FhevmType.euint64, aliceEnc2, tokenAddress, alice);
+  console.log(`  Alice:    ${Number(aliceBal2) / 1_000_000} cUSDC`);
 
-  const bobEnc = await pool.balanceOf(bob.address);
-  const bobBal = await fhevm.userDecryptEuint(FhevmType.euint64, bobEnc, poolAddress, bob);
-  console.log(`  Bob: ${Number(bobBal) / 1_000_000} USDC`);
+  const bobEnc = await token.confidentialBalanceOf(bob.address);
+  const bobBal = await fhevm.userDecryptEuint(FhevmType.euint64, bobEnc, tokenAddress, bob);
+  console.log(`  Bob:      ${Number(bobBal) / 1_000_000} cUSDC`);
 
-  const treasuryEnc = await pool.balanceOf(treasury.address);
-  const treasuryBal = await fhevm.userDecryptEuint(FhevmType.euint64, treasuryEnc, poolAddress, treasury);
-  console.log(`  Treasury: ${Number(treasuryBal) / 1_000_000} USDC\n`);
+  const treasuryEnc = await token.confidentialBalanceOf(treasury.address);
+  const treasuryBal = await fhevm.userDecryptEuint(FhevmType.euint64, treasuryEnc, tokenAddress, treasury);
+  console.log(`  Treasury: ${Number(treasuryBal) / 1_000_000} cUSDC (from wrap fee)\n`);
 
   // ═══════════════════════════════════════
-  // 5. Bob requests withdrawal
+  // 6. Bob requests unwrap
   // ═══════════════════════════════════════
-  console.log("Step 5: Bob requests withdrawal...");
+  console.log("Step 6: Bob requests unwrap (cUSDC → USDC)...");
 
-  const wInput = fhevm.createEncryptedInput(poolAddress, bob.address);
-  wInput.add64(bobBal); // Withdraw all
+  const wInput = fhevm.createEncryptedInput(tokenAddress, bob.address);
+  wInput.add64(bobBal); // Unwrap all
   const wEncrypted = await wInput.encrypt();
 
-  await pool.connect(bob).requestWithdraw(wEncrypted.handles[0], wEncrypted.inputProof);
-  console.log(`  Withdraw requested for ${Number(bobBal) / 1_000_000} USDC`);
-  console.log(`  (In production: wait for KMS async decryption → finalizeWithdraw)\n`);
+  await token.connect(bob).unwrap(
+    bob.address,   // from
+    bob.address,   // to (receive USDC)
+    wEncrypted.handles[0],
+    wEncrypted.inputProof
+  );
+  console.log(`  Unwrap requested for ${Number(bobBal) / 1_000_000} cUSDC`);
+  console.log(`  (In production: wait for KMS async decryption → finalizeUnwrap)\n`);
 
   // ═══════════════════════════════════════
   // Summary
@@ -133,10 +162,13 @@ async function main() {
   console.log("═══════════════════════════════════════");
   console.log("  Demo Complete!");
   console.log("═══════════════════════════════════════");
+  console.log("  Architecture: V4.0 Token-Centric");
   console.log("  Scheme: fhe-confidential-v1");
+  console.log("  Contracts: ConfidentialUSDC + X402PaymentVerifier");
   console.log("  Encrypted: amounts (FHE euint64)");
   console.log("  Public: participants, minPrice, nonce");
-  console.log("  Fee: 0.1% (min 0.01 USDC)");
+  console.log("  Fee: 0.1% (min 0.01 USDC) on wrap/unwrap only");
+  console.log("  Transfers: fee-free (confidentialTransfer)");
   console.log("═══════════════════════════════════════");
 }
 

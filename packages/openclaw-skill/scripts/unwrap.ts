@@ -18,7 +18,7 @@ export async function run(args: Record<string, string>): Promise<string> {
     const signerAddress = await signer.getAddress();
     const tokenAddress = getTokenAddress();
 
-    // Encrypt unwrap amount using fhevmjs
+    // Encrypt unwrap amount using @zama-fhe/relayer-sdk
     const input = fhevmInstance.createEncryptedInput(tokenAddress, signerAddress);
     input.add64(rawAmount);
     const encrypted = await input.encrypt();

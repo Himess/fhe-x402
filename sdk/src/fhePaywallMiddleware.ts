@@ -242,6 +242,11 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
   const provider = new JsonRpcProvider(config.rpcUrl);
   const nonceStore: NonceStore = config.nonceStore ?? new InMemoryNonceStore();
 
+  // [C2] Nonce mutex — prevent race condition where two concurrent requests
+  // use the same nonce before either's on-chain verification completes.
+  // Ported from PrivAgent middlewareV2.ts pendingNullifiers pattern.
+  const pendingNonces = new Set<string>();
+
   return async (req: Request, res: Response, next: NextFunction) => {
     // Rate limiting — use socket address to prevent X-Forwarded-For spoofing
     const clientIp = req.socket?.remoteAddress ?? "unknown";
@@ -313,10 +318,19 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
       return;
     }
 
+    // [C2] Nonce mutex — reject if another request is already processing this nonce
+    if (pendingNonces.has(payload.nonce)) {
+      res.status(409).json({ error: "Payment already being processed" });
+      return;
+    }
+    pendingNonces.add(payload.nonce);
+
+    try {
     // Nonce replay prevention — always atomic check-and-add to prevent TOCTOU race
     if ("checkAndAdd" in nonceStore && typeof nonceStore.checkAndAdd === "function") {
       const isNew = await nonceStore.checkAndAdd(payload.nonce);
       if (!isNew) {
+        pendingNonces.delete(payload.nonce);
         res.status(400).json({ error: "Nonce already used" });
         return;
       }
@@ -324,6 +338,7 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
       // Fallback: use atomic check-and-add pattern even with separate methods
       const isNewNonce = await nonceStore.check(payload.nonce);
       if (!isNewNonce) {
+        pendingNonces.delete(payload.nonce);
         res.status(400).json({ error: "Nonce already used" });
         return;
       }
@@ -514,6 +529,10 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
       console.error("[fhe-x402] Verification failed:", err instanceof Error ? err.message : err);
       res.status(500).json({ error: "Payment verification failed" });
     }
+    } finally {
+      // [C2] Always release nonce mutex
+      pendingNonces.delete(payload.nonce);
+    }
   };
 }
 
@@ -553,6 +572,11 @@ export function fheBatchPaywall(config: FhePaywallConfig): RequestHandler {
   const minConfirmations = config.minConfirmations ?? 1;
   const provider = new JsonRpcProvider(config.rpcUrl);
   const nonceStore: NonceStore = config.nonceStore ?? new InMemoryNonceStore();
+
+  // [C2] Nonce mutex — prevent race condition where two concurrent batch requests
+  // use the same nonce before either's on-chain verification completes.
+  // Ported from PrivAgent middlewareV2.ts pendingNullifiers pattern.
+  const pendingBatchNonces = new Set<string>();
 
   return async (req: Request, res: Response, next: NextFunction) => {
     // Rate limiting
@@ -631,6 +655,14 @@ export function fheBatchPaywall(config: FhePaywallConfig): RequestHandler {
     const payerAddress = rawPayload.from as string;
     const nonce = rawPayload.nonce as string;
 
+    // [C2] Nonce mutex check — reject if same nonce is already being processed
+    if (pendingBatchNonces.has(nonce)) {
+      res.status(409).json({ error: "Payment already being processed" });
+      return;
+    }
+    pendingBatchNonces.add(nonce);
+
+    try {
     // ===== Check for existing batch credits =====
     // NOTE: Batch credits are only consumed for known nonces that were already
     // verified on-chain during initial registration. The nonce was added to the
@@ -649,7 +681,7 @@ export function fheBatchPaywall(config: FhePaywallConfig): RequestHandler {
           // Credit consumed — allow through without on-chain verification
           req.paymentInfo = {
             from: payerAddress,
-            amount: String((rawPayload as FheBatchPaymentPayload).pricePerRequest),
+            amount: String((rawPayload as unknown as FheBatchPaymentPayload).pricePerRequest),
             asset: config.asset,
             recipient: config.recipientAddress,
             txHash: rawPayload.txHash as string,
@@ -956,6 +988,10 @@ export function fheBatchPaywall(config: FhePaywallConfig): RequestHandler {
       }
       console.error("[fhe-x402] Batch verification failed:", err instanceof Error ? err.message : err);
       res.status(500).json({ error: "Payment verification failed" });
+    }
+    } finally {
+      // [C2] Always release nonce mutex
+      pendingBatchNonces.delete(nonce);
     }
   };
 }

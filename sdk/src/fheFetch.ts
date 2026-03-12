@@ -2,7 +2,10 @@
 import { FhePaymentHandler } from "./fhePaymentHandler.js";
 import type { FhePaymentResult } from "./fhePaymentHandler.js";
 import type { FheFetchOptions } from "./types.js";
-import { TimeoutError, NetworkError } from "./errors.js";
+import { TimeoutError, NetworkError, VerificationError } from "./errors.js";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("fheFetch");
 
 /**
  * Creates an x402 FHE-aware fetch function bound to a signer.
@@ -83,6 +86,16 @@ export async function fheFetch(
         timeout
       );
 
+      // [C1] On-chain TX verification after server confirms payment
+      if (retryResponse.ok && result.txHash && options.rpcUrl) {
+        const verified = await verifyTxOnChain(options.rpcUrl, result.txHash);
+        if (!verified) {
+          log.warn("Server returned 200 but TX not confirmed on-chain", {
+            txHash: result.txHash,
+          });
+        }
+      }
+
       return retryResponse;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -152,6 +165,40 @@ export async function fheFetchWithCallback(
   onPayment(result, retryResponse.ok);
 
   return retryResponse;
+}
+
+// ============================================================================
+// On-chain TX verification (ported from PrivAgent zkFetchV2.ts)
+// ============================================================================
+
+/**
+ * Verify a transaction hash on-chain with retry.
+ * Returns true if the TX was mined and succeeded (status=1).
+ * Ported from PrivAgent's C1/H3 audit pattern.
+ */
+export async function verifyTxOnChain(
+  rpcUrl: string,
+  txHash: string,
+  maxAttempts: number = 3,
+  delayMs: number = 2000
+): Promise<boolean> {
+  // Dynamic import to avoid bundling ethers when not needed
+  const { JsonRpcProvider } = await import("ethers");
+  const provider = new JsonRpcProvider(rpcUrl);
+
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const receipt = await provider.getTransactionReceipt(txHash);
+      if (receipt && receipt.status === 1) return true;
+      if (receipt && receipt.status === 0) return false;
+    } catch {
+      // RPC error — retry
+    }
+    if (i < maxAttempts - 1) {
+      await sleep(delayMs);
+    }
+  }
+  return false;
 }
 
 // ============================================================================

@@ -59,6 +59,13 @@ describe("Sepolia — Advanced FHE Tests", function () {
   let fhevmInstance: any;
 
   before(async function () {
+    const { chainId } = await ethers.provider.getNetwork();
+    if (chainId !== 11155111n) {
+      console.log(`    Skipping Sepolia tests (chainId=${chainId}, need 11155111)`);
+      this.skip();
+      return;
+    }
+
     const signers = await ethers.getSigners();
     signer = signers[0];
     signerAddress = await signer.getAddress();

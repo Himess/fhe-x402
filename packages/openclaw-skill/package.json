@@ -9,7 +9,7 @@
   "dependencies": {
     "fhe-x402-sdk": "file:../../sdk",
     "ethers": "^6.16.0",
-    "fhevmjs": "^0.6.0"
+    "@zama-fhe/relayer-sdk": "^0.4.2"
   },
   "devDependencies": {
     "@types/node": "^20.19.30",

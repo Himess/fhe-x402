@@ -124,7 +124,7 @@ export default function App() {
       {/* ── Hero ─────────────────────────────────────────────────── */}
       <header style={S.hero}>
         <div style={S.logoRow}>
-          <span style={S.logo}>FHE x402</span>
+          <span style={S.logo}>MARC Protocol</span>
           <span style={S.versionBadge}>V4.3</span>
         </div>
         <p style={S.tagline}>Confidential Payments for the AI Economy</p>
@@ -137,6 +137,35 @@ export default function App() {
           AI agents pay for APIs with FHE-encrypted amounts. Balances stay private on-chain.
           Built on Zama fhEVM coprocessor + x402 HTTP payment standard.
         </p>
+
+        {/* Infrastructure → Protocol Evolution Banner */}
+        <div style={S.evolutionBanner}>
+          <div style={S.evolutionHeader}>
+            <span style={S.evolutionIcon}>&#9881;</span>
+            <span style={S.evolutionTitle}>Infrastructure Today &rarr; Full Protocol Tomorrow</span>
+          </div>
+          <p style={S.evolutionText}>
+            MARC is currently live as <strong style={{ color: "#2DD4BF" }}>privacy infrastructure</strong> for
+            x402 payments on Ethereum Sepolia &mdash; handling encrypted transfers, nonce verification,
+            and batch prepayments. With <strong style={{ color: "#2DD4BF" }}>ERC-8183</strong> (Agentic
+            Commerce Protocol), we're evolving into a <strong style={{ color: "#2DD4BF" }}>complete protocol</strong> where
+            AI agents autonomously create jobs, escrow funds, and settle payments &mdash; all with FHE privacy.
+          </p>
+          <div style={S.evolutionSteps}>
+            <div style={S.evoStep}>
+              <span style={S.evoStepDot}>&#9679;</span>
+              <span><strong>Now:</strong> x402 payment infrastructure (wrap/pay/verify)</span>
+            </div>
+            <div style={S.evoStep}>
+              <span style={S.evoStepDot}>&#9679;</span>
+              <span><strong>Next:</strong> Ethereum Mainnet + ERC-8183 agentic commerce</span>
+            </div>
+            <div style={S.evoStep}>
+              <span style={S.evoStepDot}>&#9679;</span>
+              <span><strong>Future:</strong> Every chain Zama reaches (Base, Solana, Monad)</span>
+            </div>
+          </div>
+        </div>
       </header>
 
       {/* ── Connect ──────────────────────────────────────────────── */}
@@ -200,11 +229,11 @@ export default function App() {
 
       {/* ── Footer ───────────────────────────────────────────────── */}
       <footer style={S.footer}>
-        <span>FHE x402 Protocol</span>
+        <span>MARC Protocol</span>
         <span style={{ color: "#2a2a2a" }}>|</span>
         <span>Powered by Zama fhEVM</span>
         <span style={{ color: "#2a2a2a" }}>|</span>
-        <a href="https://github.com/Himess/fhe-x402" target="_blank" rel="noopener noreferrer" style={{ color: "#2DD4BF", textDecoration: "none" }}>
+        <a href="https://github.com/Himess/marc-protocol" target="_blank" rel="noopener noreferrer" style={{ color: "#2DD4BF", textDecoration: "none" }}>
           GitHub
         </a>
       </footer>
@@ -262,6 +291,24 @@ const S: Record<string, React.CSSProperties> = {
     letterSpacing: 0.3,
   },
   desc: { color: "#6B7280", fontSize: 12, maxWidth: 500, margin: "14px auto 0", lineHeight: 1.6 },
+  evolutionBanner: {
+    background: `linear-gradient(135deg, ${CARD}, #1a1a2e)`,
+    border: `1px solid ${GOLD}30`,
+    borderRadius: 12,
+    padding: "18px 22px",
+    marginTop: 20,
+    textAlign: "left" as const,
+    maxWidth: 560,
+    marginLeft: "auto",
+    marginRight: "auto",
+  },
+  evolutionHeader: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 },
+  evolutionIcon: { fontSize: 16, color: GOLD },
+  evolutionTitle: { fontSize: 13, fontWeight: 700, color: "#E5E7EB" },
+  evolutionText: { fontSize: 11, color: "#9CA3AF", lineHeight: 1.7, margin: "0 0 12px 0" },
+  evolutionSteps: { display: "flex", flexDirection: "column" as const, gap: 6 },
+  evoStep: { display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#D1D5DB" },
+  evoStepDot: { color: GOLD, fontSize: 8 },
 
   // Connect
   connectCard: {

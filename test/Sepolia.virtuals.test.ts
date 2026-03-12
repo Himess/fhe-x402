@@ -57,6 +57,13 @@ describe("Sepolia — Virtuals Plugin Flow", function () {
   let verifier: Contract;
 
   before(async function () {
+    const { chainId } = await ethers.provider.getNetwork();
+    if (chainId !== 11155111n) {
+      console.log(`    Skipping Sepolia tests (chainId=${chainId}, need 11155111)`);
+      this.skip();
+      return;
+    }
+
     const signers = await ethers.getSigners();
     signer = signers[0];
     address = await signer.getAddress();

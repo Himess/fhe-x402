@@ -59,7 +59,7 @@ export const fhePlugin: Plugin = {
 
         // fheFetch handles the 402 flow automatically:
         // 1. GET url -> 402
-        // 2. Encrypt amount with fhevmjs -> cUSDC.confidentialTransfer() + verifier.recordPayment()
+        // 2. Encrypt amount with @zama-fhe/relayer-sdk -> cUSDC.confidentialTransfer() + verifier.recordPayment()
         // 3. Retry with Payment header -> 200
         try {
           const response = await fheFetch(url, {

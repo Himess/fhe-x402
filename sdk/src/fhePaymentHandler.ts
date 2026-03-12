@@ -45,7 +45,7 @@ export interface FheBatchPaymentResult {
  * V4.0 Flow (token-centric):
  * 1. Parse 402 response → extract payment requirements
  * 2. Select matching requirement
- * 3. Encrypt amount with fhevmjs
+ * 3. Encrypt amount with @zama-fhe/relayer-sdk
  * 4. Call cUSDC.confidentialTransfer() (fee-free agent-to-agent)
  * 5. Call verifier.recordPayment() (on-chain nonce)
  * 6. Return txHash + verifierTxHash + nonce for retry header
@@ -109,7 +109,7 @@ export class FhePaymentHandler {
     // Create nonce
     const nonce = ethers.hexlify(ethers.randomBytes(32));
 
-    // Encrypt amount with fhevmjs
+    // Encrypt amount with @zama-fhe/relayer-sdk
     let encrypted: { handles: string[]; inputProof: string };
     try {
       const input = this.fhevmInstance.createEncryptedInput(
@@ -215,7 +215,7 @@ export class FhePaymentHandler {
     const amount = BigInt(requirements.price);
     const nonce = ethers.hexlify(ethers.randomBytes(32));
 
-    // Encrypt amount with fhevmjs
+    // Encrypt amount with @zama-fhe/relayer-sdk
     let encrypted: { handles: string[]; inputProof: string };
     try {
       const input = this.fhevmInstance.createEncryptedInput(
@@ -364,7 +364,7 @@ export class FhePaymentHandler {
     // Create nonce
     const nonce = ethers.hexlify(ethers.randomBytes(32));
 
-    // Encrypt total amount with fhevmjs
+    // Encrypt total amount with @zama-fhe/relayer-sdk
     let encrypted: { handles: string[]; inputProof: string };
     try {
       const input = this.fhevmInstance.createEncryptedInput(
@@ -495,6 +495,7 @@ export function decodeBatchPaymentHeader(header: string): FheBatchPaymentPayload
     !parsed ||
     typeof parsed.scheme !== "string" ||
     typeof parsed.txHash !== "string" ||
+    typeof parsed.verifierTxHash !== "string" ||
     typeof parsed.nonce !== "string" ||
     typeof parsed.from !== "string" ||
     typeof parsed.chainId !== "number" ||

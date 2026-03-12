@@ -8,13 +8,14 @@
  *
  * Usage:
  *   import { RedisNonceStore } from "./redis-nonce-store";
- *   import { fhePaywall } from "fhe-x402/sdk";
+ *   import { fhePaywall } from "marc-protocol-sdk";
  *
  *   const nonceStore = new RedisNonceStore("redis://localhost:6379");
  *   app.use("/api/premium", fhePaywall({
  *     price: "1000000",
  *     asset: "USDC",
- *     poolAddress: "0x...",
+ *     tokenAddress: "0x...",
+ *     verifierAddress: "0x...",
  *     recipientAddress: "0x...",
  *     rpcUrl: "https://sepolia.infura.io/v3/...",
  *     nonceStore,

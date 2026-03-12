@@ -23,7 +23,7 @@ export type { FhePaymentHandlerOptions, FhePaymentResult, FheBatchPaymentResult 
 export { fhePaywall, fheBatchPaywall, getBatchCredits } from "./fhePaywallMiddleware.js";
 
 // Fetch wrapper (client-side)
-export { fheFetch, createFheFetch, fheFetchWithCallback } from "./fheFetch.js";
+export { fheFetch, createFheFetch, fheFetchWithCallback, verifyTxOnChain } from "./fheFetch.js";
 
 // Facilitator server
 export { createFacilitatorServer } from "./facilitator.js";
@@ -80,6 +80,13 @@ export {
   verifyAfterTransfer,
 } from "./silentFailureGuard.js";
 export type { SilentFailureCheckResult } from "./silentFailureGuard.js";
+
+// Logger
+export { createLogger, setLogLevel, getLogLevel } from "./logger.js";
+export type { Logger, LogLevel } from "./logger.js";
+
+// ANSI color helpers (demo/CLI pretty-printing)
+export { colors, banner, step, info, txBox, separator, success, error, warn } from "./colors.js";
 
 // Error classes
 export {

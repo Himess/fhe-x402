@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import "@openzeppelin/contracts/access/Ownable2Step.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+
 /**
  * @title AgentReputationRegistry
  * @notice ERC-8004 Reputation Registry — on-chain feedback for AI agents.
  * @dev Anyone can give scored feedback with tags and proof-of-payment.
  */
-contract AgentReputationRegistry {
+contract AgentReputationRegistry is Ownable2Step, Pausable {
     struct Feedback {
         address reviewer;
         uint8 score;
@@ -23,7 +26,15 @@ contract AgentReputationRegistry {
     mapping(uint256 => Feedback[]) public feedbackList;
     mapping(uint256 => Summary) public summaries;
 
+    // --- Custom Errors ---
+    error InvalidAgentId();
+    error ProofRequired();
+    error IndexOutOfBounds(uint256 agentId, uint256 index, uint256 length);
+
+    // --- Events ---
     event FeedbackGiven(uint256 indexed agentId, address indexed reviewer, uint8 score);
+
+    constructor() Ownable(msg.sender) {}
 
     /**
      * @notice Submit feedback for an agent.
@@ -37,9 +48,9 @@ contract AgentReputationRegistry {
         uint8 score,
         bytes32[] calldata tags,
         bytes calldata proofOfPayment
-    ) external {
-        require(agentId > 0, "Invalid agent ID");
-        require(proofOfPayment.length > 0, "Proof required");
+    ) external whenNotPaused {
+        if (agentId == 0) revert InvalidAgentId();
+        if (proofOfPayment.length == 0) revert ProofRequired();
 
         feedbackList[agentId].push(Feedback({
             reviewer: msg.sender,
@@ -78,7 +89,8 @@ contract AgentReputationRegistry {
         bytes32[] memory tags,
         uint256 timestamp
     ) {
-        require(index < feedbackList[agentId].length, "Index out of bounds");
+        uint256 len = feedbackList[agentId].length;
+        if (index >= len) revert IndexOutOfBounds(agentId, index, len);
         Feedback storage f = feedbackList[agentId][index];
         return (f.reviewer, f.score, f.tags, f.timestamp);
     }
@@ -89,4 +101,10 @@ contract AgentReputationRegistry {
     function feedbackCount(uint256 agentId) external view returns (uint256) {
         return feedbackList[agentId].length;
     }
+
+    /// @notice Pause feedback submissions (onlyOwner).
+    function pause() external onlyOwner { _pause(); }
+
+    /// @notice Unpause (onlyOwner).
+    function unpause() external onlyOwner { _unpause(); }
 }

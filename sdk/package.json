@@ -1,7 +1,7 @@
 {
-  "name": "fhe-x402-sdk",
+  "name": "marc-protocol-sdk",
   "version": "4.3.0",
-  "description": "FHE-powered x402 payment SDK — encrypted amounts, public participants",
+  "description": "MARC Protocol SDK — FHE-powered confidential payments for AI agents (ERC-7984, ERC-8004, ERC-8183, x402)",
   "license": "BUSL-1.1",
   "type": "module",
   "main": "dist/index.js",
@@ -14,10 +14,36 @@
     }
   },
   "files": ["dist"],
+  "keywords": [
+    "fhe",
+    "x402",
+    "marc-protocol",
+    "confidential",
+    "payment",
+    "ai-agent",
+    "erc-7984",
+    "erc-8004",
+    "erc-8183",
+    "zama",
+    "fhevm",
+    "ethereum",
+    "encrypted"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Himess/fhe-x402.git",
+    "directory": "sdk"
+  },
+  "homepage": "https://github.com/Himess/fhe-x402#readme",
+  "bugs": {
+    "url": "https://github.com/Himess/fhe-x402/issues"
+  },
+  "author": "Himess",
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "ethers": "^6.16.0"

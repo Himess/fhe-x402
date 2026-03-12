@@ -96,7 +96,7 @@ export interface FheFetchOptions extends RequestInit {
   verifierAddress: string;
   rpcUrl: string;
   signer: Signer;
-  /** fhevmjs instance for FHE encryption */
+  /** @zama-fhe/relayer-sdk instance for FHE encryption */
   fhevmInstance: FhevmInstance;
   maxPayment?: bigint;
   allowedNetworks?: string[];
@@ -111,7 +111,7 @@ export interface FheFetchOptions extends RequestInit {
   preferSingleTx?: boolean;
 }
 
-/** Minimal fhevmjs interface (avoid hard dependency) */
+/** Minimal @zama-fhe/relayer-sdk interface (avoid hard dependency) */
 export interface FhevmInstance {
   createEncryptedInput: (
     contractAddress: string,

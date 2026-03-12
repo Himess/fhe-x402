@@ -23,7 +23,7 @@ export interface IFhePluginOptions {
     verifierAddress: string;
     usdcAddress?: string;
     chainId?: number;
-    /** Required: fhevmjs instance for FHE encryption */
+    /** Required: @zama-fhe/relayer-sdk instance for FHE encryption */
     fhevmInstance: FhevmInstance;
   };
 }
@@ -67,7 +67,7 @@ class FhePlugin {
       throw new Error("Verifier address is required");
     }
     if (!this.credentials.fhevmInstance) {
-      throw new Error("fhevmjs instance is required");
+      throw new Error("fhevmInstance (from @zama-fhe/relayer-sdk) is required");
     }
   }
 
@@ -239,12 +239,12 @@ class FhePlugin {
           }
           const rawAmount = BigInt(Math.round(amountFloat * 1_000_000));
 
-          logger(`Encrypting ${amountStr} USDC with fhevmjs...`);
+          logger(`Encrypting ${amountStr} USDC with @zama-fhe/relayer-sdk...`);
 
           const { token, verifier, signer } = await self.getContracts();
           const signerAddress = await signer.getAddress();
 
-          // Encrypt amount using fhevmjs
+          // Encrypt amount using @zama-fhe/relayer-sdk
           const input = self.credentials.fhevmInstance.createEncryptedInput(
             self.credentials.tokenAddress,
             signerAddress
@@ -333,12 +333,12 @@ class FhePlugin {
           }
           const rawAmount = BigInt(Math.round(amountFloat * 1_000_000));
 
-          logger(`Encrypting unwrap amount with fhevmjs...`);
+          logger(`Encrypting unwrap amount with @zama-fhe/relayer-sdk...`);
 
           const { token, signer } = await self.getContracts();
           const signerAddress = await signer.getAddress();
 
-          // Encrypt unwrap amount using fhevmjs
+          // Encrypt unwrap amount using @zama-fhe/relayer-sdk
           const input = self.credentials.fhevmInstance.createEncryptedInput(
             self.credentials.tokenAddress,
             signerAddress

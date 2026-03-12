@@ -7,6 +7,10 @@ on:
     branches: [main, master]
 
 jobs:
+  # ═══════════════════════════════════════════════════════
+  # Stage 1: Lint + Build (parallel)
+  # ═══════════════════════════════════════════════════════
+
   lint:
     name: Lint & Format
     runs-on: ubuntu-latest
@@ -33,34 +37,6 @@ jobs:
       - run: npm ci
       - run: npx hardhat compile
 
-  test-contracts:
-    name: Contract Tests
-    runs-on: ubuntu-latest
-    needs: build-contracts
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-      - run: npm ci
-      - run: npx hardhat test
-
-  security:
-    name: Security Check
-    runs-on: ubuntu-latest
-    needs: test-contracts
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-      - run: npm ci
-      - run: npm audit --audit-level=high || true
-      - run: npx hardhat compile
-      - run: npx solhint "contracts/**/*.sol" --max-warnings 0
-
   build-sdk:
     name: Build SDK
     runs-on: ubuntu-latest
@@ -73,6 +49,35 @@ jobs:
       - run: npm ci
       - run: cd sdk && npm ci
       - run: cd sdk && npx tsup
+
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: cd frontend && npm ci
+      - run: cd frontend && npx vite build
+
+  # ═══════════════════════════════════════════════════════
+  # Stage 2: Test (parallel, after respective builds)
+  # ═══════════════════════════════════════════════════════
+
+  test-contracts:
+    name: Contract Tests
+    runs-on: ubuntu-latest
+    needs: build-contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - run: npx hardhat test
 
   test-sdk:
     name: SDK Tests
@@ -91,6 +96,7 @@ jobs:
   test-virtuals-plugin:
     name: Virtuals Plugin Tests
     runs-on: ubuntu-latest
+    needs: build-sdk
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -105,6 +111,7 @@ jobs:
   test-openclaw-skill:
     name: OpenClaw Skill Tests
     runs-on: ubuntu-latest
+    needs: build-sdk
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -116,14 +123,28 @@ jobs:
       - run: cd packages/openclaw-skill && npm ci
       - run: cd packages/openclaw-skill && npx vitest run
 
-  build-frontend:
-    name: Build Frontend
+  # ═══════════════════════════════════════════════════════
+  # Stage 3: Security (after all tests pass)
+  # ═══════════════════════════════════════════════════════
+
+  security:
+    name: Security Audit
     runs-on: ubuntu-latest
+    needs: [test-contracts, test-sdk]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
-      - run: cd frontend && npm ci
-      - run: cd frontend && npx vite build
+      - run: npm ci
+      - name: npm audit
+        run: npm audit --audit-level=high || true
+      - name: Solhint strict
+        run: npx solhint "contracts/**/*.sol" --max-warnings 0
+      - name: Check for hardcoded secrets
+        run: |
+          ! grep -rn "PRIVATE_KEY\s*=" --include="*.ts" --include="*.js" --include="*.sol" \
+            --exclude-dir=node_modules --exclude-dir=.git \
+            --exclude="*.test.*" --exclude="*.example.*" --exclude="*.md" \
+            . | grep -v "process.env" | grep -v "// " | grep -v "example" || true

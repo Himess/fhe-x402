@@ -1,14 +1,35 @@
-# FHE x402 — Confidential Payment Protocol for AI Agents
+# MARC Protocol — Modular Agent-Ready Confidential Protocol
 
-![Tests](https://img.shields.io/badge/tests-217-brightgreen)
+![Tests](https://img.shields.io/badge/tests-601+-brightgreen)
 ![License](https://img.shields.io/badge/license-BUSL--1.1-blue)
 ![Chain](https://img.shields.io/badge/chain-Ethereum%20Sepolia-purple)
+![SDK](https://img.shields.io/badge/npm-marc--protocol--sdk-red)
 
 ## Overview
 
-FHE x402 is a privacy-preserving HTTP payment protocol that enables AI agents to pay for API access with encrypted USDC amounts on Ethereum. Built on Zama's fhEVM and the x402 payment standard, it uses Fully Homomorphic Encryption to hide payment amounts on-chain while keeping sender and recipient addresses public (as required by x402). Servers verify payments through on-chain events without ever seeing the actual amounts transferred.
+MARC Protocol is a privacy-preserving payment infrastructure for AI agents. Built on **Zama's fhEVM** and the **x402 payment standard**, it uses Fully Homomorphic Encryption to hide payment amounts on-chain while keeping sender and recipient addresses public (as required by x402).
 
-**Scheme:** `fhe-confidential-v1` | **Chain:** Ethereum Sepolia (11155111) | **Tests:** 217 (78 contract + 84 SDK + 30 Virtuals + 25 OpenClaw)
+**Scheme:** `fhe-confidential-v1` | **Chain:** Ethereum Sepolia (11155111) | **Tests:** 601+ (241 contract + 173 SDK + 37 Virtuals + 31 OpenClaw + 8 FHE transfer + 55 Sepolia on-chain + 46 integration)
+
+### Why MARC?
+
+AI agents are already transacting at scale — **122M+ x402 transactions, $600M+ volume** (Dune Analytics, Q1 2026). But every payment amount, every balance, every transaction outcome is **publicly visible on-chain**. Competitors can see your API spend, your pricing strategy, your customer base.
+
+MARC Protocol encrypts what matters: **amounts and balances are FHE-encrypted**, while participants remain public for x402 compliance.
+
+### Multi-Chain Vision
+
+Zama's fhEVM is **chain-agnostic** — it deploys as a coprocessor on any EVM chain. This means MARC Protocol works **everywhere Zama goes**:
+
+| Chain | Status | Impact |
+|-------|--------|--------|
+| **Ethereum** | Live (Sepolia) | Largest DeFi TVL, highest security |
+| **Base** | Planned | #1 in x402 volume (Coinbase ecosystem) |
+| **Arbitrum** | Planned | Largest L2 by TVL |
+| **Polygon** | Planned | Enterprise + gaming agents |
+| **Any future EVM L1/L2** | Automatic | Wherever Zama deploys, MARC follows |
+
+When Zama deploys to Base, Arbitrum, and beyond — **agents on every major chain can make confidential payments through MARC Protocol.** One protocol, every chain, full privacy.
 
 > *"Crypto privacy is needed if you want to make API calls without compromising the information of your access patterns. Even with a local AI agent, you can learn a lot about what someone is doing if you see all of their search engine calls. [...] providers will demand an anti-DoS mechanism, and realistically payment per call. By default that will be credit card or some corposlop stablecoin thing — so we need crypto privacy."*
 >
@@ -121,13 +142,16 @@ Inherits: `ZamaEthereumConfig`, `ERC7984`, `ERC7984ERC20Wrapper`, `Ownable2Step`
 |-------|------|
 | `PaymentVerified(payer, server, nonce, minPrice)` | Payment nonce recorded |
 
-## Deployed Addresses (Sepolia V4.0)
+## Deployed Addresses (Sepolia V4.3)
 
 | Contract | Address |
 |----------|---------|
-| MockUSDC | `0xc89e913676B034f8b38E49f7508803d1cDEC9F4f` |
-| ConfidentialUSDC | `0xE944754aa70d4924dc5d8E57774CDf21Df5e592D` |
-| X402PaymentVerifier | `0x4503A7aee235aBD10e6064BBa8E14235fdF041f4` |
+| MockUSDC | [`0xc89e913676B034f8b38E49f7508803d1cDEC9F4f`](https://sepolia.etherscan.io/address/0xc89e913676B034f8b38E49f7508803d1cDEC9F4f) |
+| ConfidentialUSDC | [`0xE944754aa70d4924dc5d8E57774CDf21Df5e592D`](https://sepolia.etherscan.io/address/0xE944754aa70d4924dc5d8E57774CDf21Df5e592D) |
+| X402PaymentVerifier | [`0x4503A7aee235aBD10e6064BBa8E14235fdF041f4`](https://sepolia.etherscan.io/address/0x4503A7aee235aBD10e6064BBa8E14235fdF041f4) |
+| AgenticCommerceProtocol | [`0xBCA8d5ce6D57f36c7aF71954e9F7f86773a02F22`](https://sepolia.etherscan.io/address/0xBCA8d5ce6D57f36c7aF71954e9F7f86773a02F22) |
+| AgentIdentityRegistry | [`0xf4609D5DB3153717827703C795acb00867b69567`](https://sepolia.etherscan.io/address/0xf4609D5DB3153717827703C795acb00867b69567) |
+| AgentReputationRegistry | [`0xd1Dd10990f317802c79077834c75742388959668`](https://sepolia.etherscan.io/address/0xd1Dd10990f317802c79077834c75742388959668) |
 | Treasury | `0xF505e2E71df58D7244189072008f25f6b6aaE5ae` |
 
 All contracts verified on [Etherscan](https://sepolia.etherscan.io).
@@ -154,7 +178,7 @@ All contracts verified on [Etherscan](https://sepolia.etherscan.io).
 ### Client — Auto-402 Fetch
 
 ```typescript
-import { fheFetch, createFheFetch } from "fhe-x402-sdk";
+import { fheFetch, createFheFetch } from "marc-protocol-sdk";
 
 // One-shot auto-handle 402 responses
 const response = await fheFetch("https://api.example.com/data", {
@@ -179,7 +203,7 @@ const res = await secureFetch("https://api.example.com/data");
 ### Client — Payment Handler
 
 ```typescript
-import { FhePaymentHandler } from "fhe-x402-sdk";
+import { FhePaymentHandler } from "marc-protocol-sdk";
 
 const handler = new FhePaymentHandler({
   tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
@@ -199,7 +223,7 @@ const { txHash, verifierTxHash, nonce } = await handler.pay(
 ### Server — Paywall Middleware
 
 ```typescript
-import { fhePaywall } from "fhe-x402-sdk";
+import { fhePaywall } from "marc-protocol-sdk";
 import express from "express";
 
 const app = express();
@@ -222,7 +246,7 @@ app.get("/api/premium/data", (req, res) => {
 ### Facilitator Server
 
 ```typescript
-import { createFacilitatorServer } from "fhe-x402-sdk";
+import { createFacilitatorServer } from "marc-protocol-sdk";
 
 const app = await createFacilitatorServer({
   tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
@@ -240,7 +264,7 @@ app.listen(3001);
 ### ERC-8004 Agent Registration
 
 ```typescript
-import { fhePaymentMethod, fhePaymentProof } from "fhe-x402-sdk";
+import { fhePaymentMethod, fhePaymentProof } from "marc-protocol-sdk";
 
 // For agent registration files (ERC-8004)
 const method = fhePaymentMethod({
@@ -257,7 +281,7 @@ const proof = fhePaymentProof(nonce, verifierAddress);
 The default in-memory nonce store does not survive server restarts. For production, implement the `NonceStore` interface:
 
 ```typescript
-import type { NonceStore } from "fhe-x402-sdk";
+import type { NonceStore } from "marc-protocol-sdk";
 
 const redisStore: NonceStore = {
   async check(nonce: string): Promise<boolean> {
@@ -373,14 +397,21 @@ fhe-x402/
 ├── contracts/
 │   ├── ConfidentialUSDC.sol          # ERC-7984 token (wrap/transfer/unwrap + fees)
 │   ├── X402PaymentVerifier.sol       # Nonce registry (recordPayment + minPrice)
+│   ├── AgenticCommerceProtocol.sol   # ERC-8183 job escrow (1% platform fee)
+│   ├── AgentIdentityRegistry.sol     # ERC-8004 agent identity (Ownable2Step + Pausable)
+│   ├── AgentReputationRegistry.sol   # ERC-8004 reputation + feedback (Ownable2Step + Pausable)
 │   ├── interfaces/
 │   │   └── IConfidentialUSDC.sol     # Fee + admin interface
 │   └── mocks/
 │       └── MockUSDC.sol              # Test token (6 decimals)
-├── test/                             # 78 Hardhat tests
+├── test/                             # 241 Hardhat + 144 Sepolia on-chain tests
 │   ├── ConfidentialUSDC.test.ts
 │   ├── X402PaymentVerifier.test.ts
-│   └── E2E.test.ts
+│   ├── AgenticCommerceProtocol.test.ts
+│   ├── AgentIdentityRegistry.test.ts
+│   ├── AgentReputationRegistry.test.ts
+│   ├── E2E.test.ts
+│   └── Sepolia.*.test.ts            # Real Sepolia on-chain tests (skip on local)
 ├── sdk/
 │   ├── src/
 │   │   ├── types.ts                  # FHE x402 types, TOKEN_ABI, VERIFIER_ABI
@@ -390,40 +421,81 @@ fhe-x402/
 │   │   ├── facilitator.ts           # Facilitator server
 │   │   ├── errors.ts                # Error classes
 │   │   └── erc8004/index.ts         # ERC-8004 helpers
-│   └── tests/                        # 84 SDK tests
+│   └── tests/                        # 173 SDK tests
+│   ├── erc8004/index.ts             # ERC-8004 helpers
+│   ├── erc8183/index.ts             # ERC-8183 Agentic Commerce
+│   ├── silentFailureGuard.ts        # FHE silent failure mitigation
+│   ├── redisNonceStore.ts           # Production Redis nonce store
+│   └── redisBatchCreditStore.ts     # Batch credit persistence
 ├── packages/
-│   ├── virtuals-plugin/              # Virtuals GAME plugin (30 tests)
+│   ├── virtuals-plugin/              # Virtuals GAME plugin
 │   │   ├── src/fhePlugin.ts          # 5 GameFunctions
 │   │   └── tests/plugin.test.ts
-│   └── openclaw-skill/               # OpenClaw skill (25 tests)
+│   └── openclaw-skill/               # OpenClaw skill
 │       ├── scripts/                   # 6 CLI scripts
 │       └── tests/scripts.test.ts
 ├── examples/
 │   ├── eliza-plugin/                 # ElizaOS example (3 actions)
 │   └── redis-nonce-store.ts          # Redis NonceStore implementation
-├── frontend/                         # React + Vite demo app
+├── frontend/                         # React + Vite + @zama-fhe/relayer-sdk demo
 │   └── src/
-│       ├── App.tsx
-│       └── components/
+│       ├── App.tsx                   # Main app (5 tabs: Dashboard/Wallet/Pay/Jobs/Agents)
+│       ├── config.ts                 # Contract addresses + ABIs
+│       └── *Tab.tsx                  # Tab components
+├── demo/
+│   ├── marc-agent-lifecycle.ts       # Full 6-step lifecycle demo (video-ready)
+│   ├── marc-virtuals-agent.ts        # Autonomous Virtuals agent demo (video-ready)
+│   ├── agent-demo.ts                 # Basic agent payment demo
+│   ├── agent-seller.ts               # Express paywall server
+│   └── agent-buyer.ts                # Client using fheFetch
 ├── docs/
 │   ├── LIGHTPAPER.md                 # Investor/jury-ready paper
+│   ├── REVENUE-PROJECTIONS.md        # Revenue model + market analysis
 │   ├── PROTOCOL.md                   # Technical specification (V4.0)
 │   ├── SECURITY.md                   # Security policy + threat model
-│   ├── AUDIT-V4.0.md                # V4.0 audit report
+│   ├── AUDIT-FINDINGS-V4.3.md       # V4.3 deep audit report
 │   ├── ROADMAP.md                    # Version milestones
 │   └── TODO.md                       # Development tracker
 └── deploy/
     └── 01_deploy.ts
 ```
 
+## Revenue Model
+
+### Two Unbypassable Fee Streams
+
+| Stream | Rate | Trigger | Enforcement |
+|--------|------|---------|-------------|
+| **Wrap/Unwrap Fee** | 0.1% (min $0.01) | USDC enters/exits encrypted layer | Contract-level (`accumulatedFees → treasury`) |
+| **ERC-8183 Job Escrow** | 1% platform fee | Job completion | Contract-level (`PLATFORM_FEE_BPS = 100`) |
+
+**ERC-8183 Job Escrow — Primary Revenue:**
+Agent creates job → funds locked in escrow → work delivered → evaluator approves → **99% to provider, 1% to protocol**. The 1% fee is enforced at the contract level — mathematically unbypassable.
+
+**Transfers are fee-free** — this incentivizes agents to stay in the encrypted cUSDC layer, increasing protocol stickiness and reducing exit friction.
+
+### Revenue Projections
+
+| Year | Scenario | Wrap/Unwrap Fee | Job Escrow (1%) | Enterprise | Total |
+|------|----------|-----------------|-----------------|-----------|-------|
+| **2026** | Conservative | $24K | $3K | $0 | **$27K** |
+| **2026** | Base | $90K | $60K | $50K | **$200K** |
+| **2026** | Optimistic | $240K | $1.2M | $150K | **$1.59M** |
+| **2027** | Multi-Chain | $1M | $3M | $300K | **$4.3M** |
+| **2028+** | Mainstream | $5M | $15M | $1M | **$21M** |
+
+Key insight: **every new chain Zama deploys to multiplies MARC's addressable market.** Current x402 volume is $600M+ with 500% YoY growth. MARC needs just 2-5% adoption for meaningful revenue.
+
+See [docs/REVENUE-PROJECTIONS.md](docs/REVENUE-PROJECTIONS.md) for detailed projections, sensitivity analysis, and market context.
+
 ## Security
 
-### What FHE x402 Protects
+### What MARC Protocol Protects
 
 - **Payment amounts** — Encrypted via FHE (euint64). No on-chain observer can determine transfer values.
 - **Token balances** — Encrypted via FHE. Individual cUSDC balances are not visible on-chain.
 
-### What FHE x402 Does NOT Protect
+### What MARC Protocol Does NOT Protect
 
 - **Participant identity** — Sender and recipient addresses are public (x402 requirement).
 - **Transaction existence** — Events are emitted for all operations.
@@ -458,7 +530,7 @@ See [docs/SECURITY.md](docs/SECURITY.md) for the full threat model and audit his
 - TypeScript SDK with `ethers@6` + `tsup` (ESM/CJS)
 - Hardhat with viaIR optimizer, Cancun EVM
 - Virtuals Protocol GAME SDK
-- React + Vite + fhevmjs/web (frontend demo)
+- React + Vite + @zama-fhe/relayer-sdk/web (frontend demo)
 
 ## Roadmap
 
@@ -469,9 +541,12 @@ See [docs/SECURITY.md](docs/SECURITY.md) for the full threat model and audit his
 - **V4.3** — Batch prepayment (recordBatchPayment, batch credit system)
 - **V4.2.1** — Security hardening (access control, SafeCast, Pausable ACP, hook safety)
 
-### In Progress
-- **V5.0** — ERC-8183 Agentic Commerce (job escrow, 1% completion fee)
-- **V5.0** — ERC-8004 full integration (identity registry + reputation + feedback)
+### Completed (V4.3)
+- **V4.3** — ERC-8183 Agentic Commerce (job escrow, 1% completion fee)
+- **V4.3** — ERC-8004 full integration (identity + reputation + feedback, deployed + verified)
+- **V4.3** — Deep audit: 414 tests, all CRITICAL/HIGH/MEDIUM findings fixed
+- **V4.3** — Frontend: 5-tab UI (Dashboard, Wallet, Pay, Jobs, Agents)
+- **V4.3** — Redis stores, silent failure guard, batch prepayment
 
 ### Planned — V6.0 (Production Readiness)
 - UUPS proxy pattern for contract upgradeability
@@ -482,15 +557,18 @@ See [docs/SECURITY.md](docs/SECURITY.md) for the full threat model and audit his
 - Formal verification (Certora or Halmos state machine proofs)
 - Professional third-party audit
 
-### Planned — V7.0 (Ecosystem Growth)
-- L2 deployment (Base, Arbitrum — when Zama coprocessor supports L2)
+### Planned — V7.0 (Multi-Chain Expansion)
+- **Base deployment** — #1 chain for x402 volume (Coinbase ecosystem)
+- **Arbitrum deployment** — Largest L2 by TVL
+- **Ethereum Mainnet** — Highest security, largest DeFi TVL
 - Multi-token factory (cWETH, cDAI confidential wrappers)
 - x402 Foundation membership
 - ERC-8183 reference implementation ownership
-- Zama partnership (Zaiffer-level collaboration)
+- ERC-8126 risk scoring (agent reputation risk framework)
+- Zama partnership (Zaiffer cUSDC migration)
 - LangChain / CrewAI / AutoGPT agent framework integrations
 - Facilitator network (decentralized verification service)
-- Mainnet deployment
+- **Goal: MARC Protocol live on every chain where Zama fhEVM deploys**
 
 ## License
 

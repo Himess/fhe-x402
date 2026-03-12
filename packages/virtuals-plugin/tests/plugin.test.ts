@@ -177,7 +177,7 @@ describe("FhePlugin constructor", () => {
             fhevmInstance: null as any,
           },
         })
-    ).toThrow("fhevmjs instance is required");
+    ).toThrow("fhevmInstance (from @zama-fhe/relayer-sdk) is required");
   });
 });
 
