@@ -126,8 +126,8 @@ Inherits: `ZamaEthereumConfig`, `ERC7984`, `ERC7984ERC20Wrapper`, `Ownable2Step`
 | Contract | Address |
 |----------|---------|
 | MockUSDC | `0xc89e913676B034f8b38E49f7508803d1cDEC9F4f` |
-| ConfidentialUSDC | `0x3864B98D1B1EC2109C679679052e2844b4153889` |
-| X402PaymentVerifier | `0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83` |
+| ConfidentialUSDC | `0xE944754aa70d4924dc5d8E57774CDf21Df5e592D` |
+| X402PaymentVerifier | `0x4503A7aee235aBD10e6064BBa8E14235fdF041f4` |
 | Treasury | `0xF505e2E71df58D7244189072008f25f6b6aaE5ae` |
 
 All contracts verified on [Etherscan](https://sepolia.etherscan.io).
@@ -158,8 +158,8 @@ import { fheFetch, createFheFetch } from "fhe-x402-sdk";
 
 // One-shot auto-handle 402 responses
 const response = await fheFetch("https://api.example.com/data", {
-  tokenAddress: "0x3864B98D1B1EC2109C679679052e2844b4153889",
-  verifierAddress: "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83",
+  tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
+  verifierAddress: "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4",
   rpcUrl: "https://sepolia.infura.io/v3/...",
   signer: wallet,
   fhevmInstance: fhevm,
@@ -167,8 +167,8 @@ const response = await fheFetch("https://api.example.com/data", {
 
 // Or create a reusable fetch with pre-configured credentials
 const secureFetch = createFheFetch({
-  tokenAddress: "0x3864B98D1B1EC2109C679679052e2844b4153889",
-  verifierAddress: "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83",
+  tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
+  verifierAddress: "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4",
   rpcUrl: "https://sepolia.infura.io/v3/...",
   signer: wallet,
   fhevmInstance: fhevm,
@@ -182,8 +182,8 @@ const res = await secureFetch("https://api.example.com/data");
 import { FhePaymentHandler } from "fhe-x402-sdk";
 
 const handler = new FhePaymentHandler({
-  tokenAddress: "0x3864B98D1B1EC2109C679679052e2844b4153889",
-  verifierAddress: "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83",
+  tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
+  verifierAddress: "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4",
   rpcUrl: "https://sepolia.infura.io/v3/...",
   signer: wallet,
   fhevmInstance: fhevm,
@@ -207,8 +207,8 @@ const app = express();
 app.use("/api/premium", fhePaywall({
   price: "1000000",        // 1 USDC (6 decimals)
   asset: "USDC",
-  tokenAddress: "0x3864B98D1B1EC2109C679679052e2844b4153889",
-  verifierAddress: "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83",
+  tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
+  verifierAddress: "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4",
   recipientAddress: "0x...",
   rpcUrl: "https://sepolia.infura.io/v3/...",
   minConfirmations: 1,
@@ -225,8 +225,8 @@ app.get("/api/premium/data", (req, res) => {
 import { createFacilitatorServer } from "fhe-x402-sdk";
 
 const app = await createFacilitatorServer({
-  tokenAddress: "0x3864B98D1B1EC2109C679679052e2844b4153889",
-  verifierAddress: "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83",
+  tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
+  verifierAddress: "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4",
   rpcUrl: "https://sepolia.infura.io/v3/...",
   apiKey: process.env.API_KEY,
 });
@@ -244,8 +244,8 @@ import { fhePaymentMethod, fhePaymentProof } from "fhe-x402-sdk";
 
 // For agent registration files (ERC-8004)
 const method = fhePaymentMethod({
-  tokenAddress: "0x3864B98D1B1EC2109C679679052e2844b4153889",
-  verifierAddress: "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83",
+  tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
+  verifierAddress: "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4",
 });
 
 // For feedback submission (proof-of-payment)
@@ -281,8 +281,8 @@ import { FhePlugin } from "@fhe-x402/virtuals-plugin";
 const plugin = new FhePlugin({
   credentials: {
     privateKey: process.env.PRIVATE_KEY!,
-    tokenAddress: "0x3864B98D1B1EC2109C679679052e2844b4153889",
-    verifierAddress: "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83",
+    tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
+    verifierAddress: "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4",
     fhevmInstance,
   },
 });

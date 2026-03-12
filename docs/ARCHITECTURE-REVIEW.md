@@ -174,7 +174,7 @@ FHE'de `confidentialTransfer()` her zaman başarılı döner — bakiye yetersiz
 | 5 | ERC-8183 SDK stub | 9 gerçek contract fonksiyonu eklendi | ✅ |
 | 6 | ERC-8004 SDK stub | 7 gerçek contract fonksiyonu eklendi | ✅ |
 | 7 | Test ABI yanlış | Tüm mock ABI'ler düzeltildi | ✅ |
-| 8 | Verifier Sepolia outdated | V4.3 redeployed: 0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83 | ✅ |
+| 8 | Verifier Sepolia outdated | V4.3 redeployed: 0x4503A7aee235aBD10e6064BBa8E14235fdF041f4 | ✅ |
 | 9 | Sepolia on-chain test yok | 19 on-chain test yazıldı, hepsi geçiyor | ✅ |
 
 ### Güncel Test Sayıları

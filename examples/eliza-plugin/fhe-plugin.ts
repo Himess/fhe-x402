@@ -3,12 +3,15 @@
  *
  * Adds encrypted USDC payment actions to an ElizaOS agent.
  * Uses FHE to hide payment amounts on-chain.
+ *
+ * V4.0 token-centric: agents hold cUSDC directly via ConfidentialUSDC.
+ * No pool contract. Wrap/unwrap USDC <-> cUSDC, pay via confidentialTransfer.
  */
 
-import { fheFetch, POOL_ABI } from "fhe-x402-sdk";
+import { fheFetch, TOKEN_ABI, VERIFIER_ABI } from "fhe-x402-sdk";
 import type { FhevmInstance } from "fhe-x402-sdk";
-import { JsonRpcProvider, Wallet, Contract, ethers } from "ethers";
-import { initFhevm, createInstance } from "fhevmjs";
+import { JsonRpcProvider, Wallet, Contract } from "ethers";
+import { createInstance, SepoliaConfig } from "@zama-fhe/relayer-sdk";
 
 // ElizaOS plugin interface (simplified)
 interface Action {
@@ -34,11 +37,12 @@ interface Plugin {
   initialize: () => Promise<void>;
 }
 
-const POOL_ADDRESS = "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73";
-const USDC_ADDRESS = "0xc89e913676B034f8b38E49f7508803d1cDEC9F4f";
-const GATEWAY_URL = "https://gateway.sepolia.zama.ai";
+const TOKEN_ADDRESS = "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D"; // ConfidentialUSDC
+const VERIFIER_ADDRESS = "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4"; // X402PaymentVerifier
+const USDC_ADDRESS = "0xc89e913676B034f8b38E49f7508803d1cDEC9F4f"; // MockUSDC
 
-let pool: Contract;
+let token: Contract;
+let verifier: Contract;
 let signer: Wallet;
 let fhevmInstance: FhevmInstance;
 
@@ -54,12 +58,13 @@ export const fhePlugin: Plugin = {
         if (!url) return { success: false, message: "URL required" };
 
         // fheFetch handles the 402 flow automatically:
-        // 1. GET url → 402
-        // 2. Encrypt amount with fhevmjs → pool.pay()
-        // 3. Retry with Payment header → 200
+        // 1. GET url -> 402
+        // 2. Encrypt amount with fhevmjs -> cUSDC.confidentialTransfer() + verifier.recordPayment()
+        // 3. Retry with Payment header -> 200
         try {
           const response = await fheFetch(url, {
-            poolAddress: POOL_ADDRESS,
+            tokenAddress: TOKEN_ADDRESS,
+            verifierAddress: VERIFIER_ADDRESS,
             rpcUrl: process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com",
             signer,
             fhevmInstance,
@@ -78,114 +83,105 @@ export const fhePlugin: Plugin = {
 
     {
       name: "FHE_BALANCE",
-      description: "Check the agent's public USDC balance and pool initialization status",
+      description: "Check the agent's USDC balance and encrypted cUSDC balance",
       handler: async (): Promise<ActionResult> => {
         const address = await signer.getAddress();
-        const isInit = await pool.isInitialized(address);
+
+        // Public USDC balance
         const usdc = new Contract(
           USDC_ADDRESS,
           ["function balanceOf(address) view returns (uint256)"],
           signer
         );
-        const balance: bigint = await usdc.balanceOf(address);
-        const formatted = (Number(balance) / 1_000_000).toFixed(2);
+        const usdcBalance: bigint = await usdc.balanceOf(address);
+        const usdcFormatted = (Number(usdcBalance) / 1_000_000).toFixed(2);
+
+        // Encrypted cUSDC balance (returns an encrypted handle — not readable off-chain without decryption)
+        const cUsdcHandle: string = await token.confidentialBalanceOf(address);
+
         return {
           success: true,
-          data: { balance: formatted, raw: balance.toString(), isInitialized: isInit },
-          message: `Public USDC: ${formatted}, Pool initialized: ${isInit}`,
+          data: {
+            usdc: usdcFormatted,
+            usdcRaw: usdcBalance.toString(),
+            cUsdcHandle,
+          },
+          message: `Public USDC: ${usdcFormatted}, cUSDC handle: ${cUsdcHandle}`,
         };
       },
     },
 
     {
-      name: "FHE_DEPOSIT",
-      description: "Deposit USDC into the FHE encrypted payment pool",
+      name: "FHE_WRAP",
+      description: "Wrap USDC into encrypted cUSDC (ConfidentialUSDC). Approve + wrap in one step.",
       handler: async (ctx: ActionContext): Promise<ActionResult> => {
         const amount = ctx.params.amount;
         if (!amount) return { success: false, message: "Amount required (in USDC)" };
 
         const amountRaw = BigInt(Math.round(parseFloat(amount) * 1_000_000));
 
-        // Approve + deposit (plaintext — no FHE encryption needed for deposit)
-        const usdc = new Contract(
-          USDC_ADDRESS,
-          ["function approve(address, uint256) returns (bool)"],
-          signer
-        );
-        const approveTx = await usdc.approve(POOL_ADDRESS, amountRaw);
-        await approveTx.wait();
+        try {
+          // Approve ConfidentialUSDC to pull USDC
+          const usdc = new Contract(
+            USDC_ADDRESS,
+            ["function approve(address, uint256) returns (bool)"],
+            signer
+          );
+          const approveTx = await usdc.approve(TOKEN_ADDRESS, amountRaw);
+          await approveTx.wait();
 
-        const tx = await pool.deposit(amountRaw);
-        const receipt = await tx.wait();
+          // Wrap USDC -> cUSDC (0.1% fee charged on wrap)
+          const address = await signer.getAddress();
+          const tx = await token.wrap(address, amountRaw);
+          const receipt = await tx.wait();
 
-        return {
-          success: true,
-          data: { txHash: receipt.hash, amount },
-          message: `Deposited ${amount} USDC | TX: ${receipt.hash}`,
-        };
+          return {
+            success: true,
+            data: { txHash: receipt.hash, amount },
+            message: `Wrapped ${amount} USDC -> cUSDC | TX: ${receipt.hash}`,
+          };
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return { success: false, message: `Wrap failed: ${msg}` };
+        }
       },
     },
 
     {
-      name: "FHE_WITHDRAW_FINALIZE",
-      description: "Finalize a pending withdrawal (step 2 of 2). Requires the clear amount and decryption proof from the KMS gateway.",
+      name: "FHE_UNWRAP",
+      description: "Unwrap cUSDC back to USDC. Requires FHE-encrypted amount. This is async — KMS decryption finalizes later via finalizeUnwrap.",
       handler: async (ctx: ActionContext): Promise<ActionResult> => {
-        const clearAmountStr = ctx.params.clearAmount;
-        const proof = ctx.params.proof || ctx.params.decryptionProof;
+        const amount = ctx.params.amount;
+        if (!amount) return { success: false, message: "Amount required (in USDC)" };
 
-        if (!clearAmountStr || !proof) {
-          return { success: false, message: "Both clearAmount and proof are required" };
-        }
-
-        const clearAmount = parseInt(clearAmountStr);
-        if (isNaN(clearAmount) || clearAmount < 0) {
-          return { success: false, message: "Invalid clearAmount. Must be a non-negative integer." };
-        }
+        const amountRaw = BigInt(Math.round(parseFloat(amount) * 1_000_000));
 
         try {
-          const tx = await pool.finalizeWithdraw(clearAmount, proof);
-          const receipt = await tx.wait();
+          const address = await signer.getAddress();
 
-          const amountUSDC = (clearAmount / 1_000_000).toFixed(2);
+          // Encrypt the amount for the unwrap call
+          const input = fhevmInstance.createEncryptedInput(TOKEN_ADDRESS, address);
+          input.add64(amountRaw);
+          const { handles, inputProof } = await input.encrypt();
 
-          return {
-            success: true,
-            data: {
-              action: "withdraw_finalized",
-              amount: amountUSDC,
-              clearAmount: clearAmountStr,
-              txHash: receipt.hash,
-              blockNumber: receipt.blockNumber,
-            },
-            message: `Withdrawal finalized: ${amountUSDC} USDC | TX: ${receipt.hash}`,
-          };
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e);
-          return { success: false, message: `Finalize withdrawal failed: ${msg}` };
-        }
-      },
-    },
-
-    {
-      name: "FHE_CANCEL_WITHDRAW",
-      description: "Cancel a pending withdrawal request and refund the amount back to your encrypted pool balance.",
-      handler: async (): Promise<ActionResult> => {
-        try {
-          const tx = await pool.cancelWithdraw();
+          // Request unwrap: cUSDC -> USDC (0.1% fee charged on unwrap)
+          // This initiates KMS decryption — finalizeUnwrap is called by the KMS callback
+          const tx = await token.unwrap(address, address, handles[0], inputProof);
           const receipt = await tx.wait();
 
           return {
             success: true,
             data: {
-              action: "withdraw_cancelled",
+              action: "unwrap_requested",
+              amount,
               txHash: receipt.hash,
               blockNumber: receipt.blockNumber,
             },
-            message: `Withdrawal cancelled | TX: ${receipt.hash}`,
+            message: `Unwrap requested for ${amount} cUSDC -> USDC | TX: ${receipt.hash} (KMS finalization pending)`,
           };
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
-          return { success: false, message: `Cancel withdrawal failed: ${msg}` };
+          return { success: false, message: `Unwrap failed: ${msg}` };
         }
       },
     },
@@ -195,16 +191,15 @@ export const fhePlugin: Plugin = {
     const rpcUrl = process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
     const provider = new JsonRpcProvider(rpcUrl);
     signer = new Wallet(process.env.PRIVATE_KEY!, provider);
-    pool = new Contract(POOL_ADDRESS, POOL_ABI, signer);
+    token = new Contract(TOKEN_ADDRESS, TOKEN_ABI, signer);
+    verifier = new Contract(VERIFIER_ADDRESS, VERIFIER_ABI, signer);
 
-    // Initialize fhevmjs for real FHE encryption
-    await initFhevm();
+    // Initialize @zama-fhe/relayer-sdk for real FHE encryption
     fhevmInstance = await createInstance({
-      chainId: 11155111,
-      networkUrl: rpcUrl,
-      gatewayUrl: GATEWAY_URL,
+      ...SepoliaConfig,
+      network: rpcUrl,
     }) as unknown as FhevmInstance;
 
-    console.log("[FHE x402] Plugin initialized with fhevmjs");
+    console.log("[FHE x402] Plugin initialized — token-centric V4.0");
   },
 };

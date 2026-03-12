@@ -3,7 +3,7 @@
  *
  * Shows the full V4.0 token-centric flow:
  *   Step 1: Wrap USDC → cUSDC (with fee)
- *   Step 2: Encrypted payment to another agent (real fhevmjs encryption)
+ *   Step 2: Encrypted payment to another agent (real FHE encryption)
  *   Step 3: Record payment nonce on-chain
  *   Step 4: Check balance status
  *   Step 5: Request withdrawal (step 1 of 2-step unwrap)
@@ -13,7 +13,6 @@
  */
 
 import { JsonRpcProvider, Wallet, Contract, parseUnits, formatUnits, ethers } from "ethers";
-import { initFhevm, createInstance } from "fhevmjs";
 
 // ============================================================================
 // ANSI Colors
@@ -30,10 +29,10 @@ const RED = "\x1b[31m";
 const MAGENTA = "\x1b[35m";
 
 // V4.0 Token-Centric Addresses (Sepolia)
-const TOKEN_ADDRESS = "0x3864B98D1B1EC2109C679679052e2844b4153889";
-const VERIFIER_ADDRESS = "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83";
+const TOKEN_ADDRESS = "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D";
+const VERIFIER_ADDRESS = "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4";
 const USDC_ADDRESS = "0xc89e913676B034f8b38E49f7508803d1cDEC9F4f";
-const GATEWAY_URL = "https://gateway.sepolia.zama.ai";
+
 
 const USDC_ABI = [
   "function approve(address spender, uint256 amount) external returns (bool)",

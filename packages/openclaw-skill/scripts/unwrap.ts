@@ -1,4 +1,4 @@
-import { getContracts, getTokenAddress, ok, fail, parseCliArgs } from "./_wallet.js";
+import { getContracts, getTokenAddress, ok, fail, parseCliArgs, parseAmount } from "./_wallet.js";
 
 export async function run(args: Record<string, string>): Promise<string> {
   try {
@@ -7,11 +7,12 @@ export async function run(args: Record<string, string>): Promise<string> {
       return fail("--amount is required");
     }
 
-    const amountFloat = parseFloat(amountStr);
-    if (isNaN(amountFloat) || amountFloat <= 0) {
+    let rawAmount: bigint;
+    try {
+      rawAmount = parseAmount(amountStr);
+    } catch {
       return fail("Invalid amount. Must be a positive number.");
     }
-    const rawAmount = BigInt(Math.round(amountFloat * 1_000_000));
 
     const { token, signer, fhevmInstance } = await getContracts();
     const signerAddress = await signer.getAddress();

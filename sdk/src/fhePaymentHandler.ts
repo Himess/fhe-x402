@@ -117,7 +117,12 @@ export class FhePaymentHandler {
         signerAddress
       );
       input.add64(amount);
-      encrypted = await input.encrypt();
+      encrypted = await Promise.race([
+        input.encrypt(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("FHE encryption timed out after 30s")), 30_000)
+        ),
+      ]);
     } catch (err) {
       throw new EncryptionError(
         `FHE encryption failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -195,6 +200,13 @@ export class FhePaymentHandler {
    * Transfers cUSDC to server and records nonce in one transaction.
    * Requires the agent to have set the verifier as an operator on the token:
    *   cUSDC.setOperator(verifierAddress, type(uint48).max)
+   *
+   * WARNING: This method does NOT work with real FHE on Sepolia/mainnet.
+   * FHE input proofs are bound to msg.sender. When the verifier contract
+   * calls confidentialTransferFrom(), msg.sender is the verifier (not the
+   * agent who created the proof), causing the FHE VM to reject the proof.
+   * Use createPayment() (2-TX flow) instead for production deployments.
+   * This method is kept for local Hardhat testing where FHE is mocked.
    */
   async createSingleTxPayment(
     requirements: FhePaymentRequirements
@@ -211,7 +223,12 @@ export class FhePaymentHandler {
         signerAddress
       );
       input.add64(amount);
-      encrypted = await input.encrypt();
+      encrypted = await Promise.race([
+        input.encrypt(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("FHE encryption timed out after 30s")), 30_000)
+        ),
+      ]);
     } catch (err) {
       throw new EncryptionError(
         `FHE encryption failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -355,7 +372,12 @@ export class FhePaymentHandler {
         signerAddress
       );
       input.add64(totalAmount);
-      encrypted = await input.encrypt();
+      encrypted = await Promise.race([
+        input.encrypt(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("FHE encryption timed out after 30s")), 30_000)
+        ),
+      ]);
     } catch (err) {
       throw new EncryptionError(
         `FHE encryption failed: ${err instanceof Error ? err.message : String(err)}`,

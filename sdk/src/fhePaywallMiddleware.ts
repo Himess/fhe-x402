@@ -382,6 +382,25 @@ export function fhePaywall(config: FhePaywallConfig): RequestHandler {
         return;
       }
 
+      // Silent failure heuristic: verify sender's balance handle changed
+      // This catches the common case where FHE.select() returns 0 on insufficient balance
+      try {
+        const senderBalanceHandle: string = await provider.call({
+          to: config.tokenAddress,
+          data: new ethers.Interface(["function confidentialBalanceOf(address) view returns (bytes32)"])
+            .encodeFunctionData("confidentialBalanceOf", [payload.from]),
+        });
+        // Note: We can't decrypt the handle, but a zero handle means no balance at all
+        const ZERO_HANDLE = "0x" + "00".repeat(32);
+        if (senderBalanceHandle === ZERO_HANDLE || senderBalanceHandle === "0x") {
+          // Sender's encrypted balance is zero — transfer was definitely 0
+          res.status(400).json({ error: "Silent failure detected: sender has zero encrypted balance" });
+          return;
+        }
+      } catch {
+        // Balance check failed — proceed without heuristic (non-blocking)
+      }
+
       // Verify nonce event — dual-TX (PaymentVerified) or single-TX (PayAndRecordCompleted)
       if (payload.verifierTxHash) {
         // V4.0/V4.1 dual-TX: PaymentVerified in separate verifier transaction

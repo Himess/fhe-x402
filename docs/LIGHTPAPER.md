@@ -173,8 +173,8 @@ On-chain: encrypted balances change, amounts are HIDDEN
 | Contract | Address |
 |----------|---------|
 | MockUSDC | `0xc89e913676B034f8b38E49f7508803d1cDEC9F4f` |
-| ConfidentialUSDC | `0x3864B98D1B1EC2109C679679052e2844b4153889` |
-| X402PaymentVerifier | `0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83` |
+| ConfidentialUSDC | `0xE944754aa70d4924dc5d8E57774CDf21Df5e592D` |
+| X402PaymentVerifier | `0x4503A7aee235aBD10e6064BBa8E14235fdF041f4` |
 | Treasury | `0xF505e2E71df58D7244189072008f25f6b6aaE5ae` |
 
 All contracts verified on [Etherscan](https://sepolia.etherscan.io).
@@ -278,8 +278,8 @@ Agent-to-agent `confidentialTransfer()` carries zero protocol fee. This is inten
 import { fheFetch } from "fhe-x402-sdk";
 
 const response = await fheFetch("https://api.example.com/data", {
-  tokenAddress: "0x3864B98D1B1EC2109C679679052e2844b4153889",
-  verifierAddress: "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83",
+  tokenAddress: "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D",
+  verifierAddress: "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4",
   rpcUrl: "https://sepolia.infura.io/v3/...",
   signer: wallet,
   fhevmInstance: fhevm,

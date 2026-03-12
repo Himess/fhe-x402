@@ -294,8 +294,8 @@ describe("API key authentication", () => {
       apiKey: "correct-api-key",
     });
 
-    // API key middleware is the second use() call
-    const authMiddleware = mockUse.mock.calls[1]?.[0];
+    // API key middleware is the third use() call (after json + CORS)
+    const authMiddleware = mockUse.mock.calls[2]?.[0];
     if (!authMiddleware) return;
 
     const req = {

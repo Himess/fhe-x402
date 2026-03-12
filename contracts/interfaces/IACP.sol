@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.24;
 
+/// @notice Hook interface for ACP job lifecycle callbacks.
+/// @dev Hooks are called with a gas limit of 100,000. If the hook reverts or
+///      exceeds the gas limit, the parent operation succeeds and a HookFailed
+///      event is emitted. Keep hook implementations lightweight.
 interface IACPHook {
+    /// @notice Called after a job action (fund, submit, complete, reject, claimRefund).
+    /// @param jobId The job identifier
+    /// @param selector The function selector of the action that triggered this hook
+    /// @param data ABI-encoded action-specific data
     function afterAction(uint256 jobId, bytes4 selector, bytes calldata data) external;
 }
 

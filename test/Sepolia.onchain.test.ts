@@ -19,8 +19,8 @@ import type { Contract, Signer } from "ethers";
 
 // Deployed contract addresses on Sepolia
 const MOCK_USDC_ADDRESS = "0xc89e913676B034f8b38E49f7508803d1cDEC9F4f";
-const CONFIDENTIAL_USDC_ADDRESS = "0x3864B98D1B1EC2109C679679052e2844b4153889";
-const X402_VERIFIER_ADDRESS = "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83";
+const CONFIDENTIAL_USDC_ADDRESS = "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D";
+const X402_VERIFIER_ADDRESS = "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4";
 
 // Minimal ABIs — only what we need for testing
 const USDC_ABI = [

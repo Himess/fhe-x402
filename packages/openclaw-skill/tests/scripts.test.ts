@@ -17,7 +17,7 @@ vi.mock("fhe-x402-sdk", () => ({
   ],
 }));
 
-// Mock fhevmjs — simulates real fhevmjs createEncryptedInput().add64().encrypt()
+// Mock @zama-fhe/relayer-sdk — simulates createEncryptedInput().add64().encrypt()
 const mockEncrypt = vi.fn().mockResolvedValue({
   handles: ["0x" + "ff".repeat(32)],
   inputProof: "0x" + "ee".repeat(64),
@@ -28,8 +28,8 @@ const mockCreateEncryptedInput = vi.fn().mockReturnValue({
   encrypt: mockEncrypt,
 });
 
-vi.mock("fhevmjs", () => ({
-  initFhevm: vi.fn().mockResolvedValue(undefined),
+vi.mock("@zama-fhe/relayer-sdk/node", () => ({
+  SepoliaConfig: { chainId: 11155111 },
   createInstance: vi.fn().mockResolvedValue({
     createEncryptedInput: mockCreateEncryptedInput,
   }),
@@ -46,7 +46,7 @@ const mockConfidentialBalanceOf = vi.fn().mockResolvedValue("0x" + "00".repeat(3
 const mockFinalizeUnwrap = vi.fn();
 const mockGetAddress = vi.fn().mockResolvedValue("0x1234567890abcdef1234567890abcdef12345678");
 const mockGetBalance = vi.fn().mockResolvedValue(1_000_000_000_000_000n);
-const mockGetTokenAddress = vi.fn().mockResolvedValue("0x3864B98D1B1EC2109C679679052e2844b4153889");
+const mockGetTokenAddress = vi.fn().mockResolvedValue("0xE944754aa70d4924dc5d8E57774CDf21Df5e592D");
 
 vi.mock("ethers", async () => {
   const actual = await vi.importActual("ethers");

@@ -66,6 +66,21 @@ export {
   getJob,
 } from "./erc8183/index.js";
 
+// Redis stores (production)
+export { RedisNonceStore } from "./redisNonceStore.js";
+export type { RedisNonceStoreOptions, RedisLike } from "./redisNonceStore.js";
+export { RedisBatchCreditStore } from "./redisBatchCreditStore.js";
+export type { BatchCreditStore, BatchCreditEntry, BatchCreditStoreOptions } from "./redisBatchCreditStore.js";
+
+// Silent failure guard
+export {
+  checkSenderHasBalance,
+  checkBalanceChanged,
+  getBalanceBefore,
+  verifyAfterTransfer,
+} from "./silentFailureGuard.js";
+export type { SilentFailureCheckResult } from "./silentFailureGuard.js";
+
 // Error classes
 export {
   FheX402Error,

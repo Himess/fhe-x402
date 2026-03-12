@@ -1,38 +1,14 @@
 import React, { useState, useRef } from "react";
-import ConnectWallet from "./components/ConnectWallet";
-import BalanceDisplay from "./components/BalanceDisplay";
-import WrapForm from "./components/DepositForm";
-import PayForm from "./components/PayForm";
-import UnwrapForm from "./components/WithdrawForm";
-import { BrowserProvider, JsonRpcSigner, Contract, ethers } from "ethers";
-import { initFhevm, createInstance } from "fhevmjs/web";
+import { BrowserProvider, JsonRpcSigner } from "ethers";
+import { createInstance, SepoliaConfig, initSDK } from "@zama-fhe/relayer-sdk/web";
+import WalletTab from "./WalletTab";
+import JobsTab from "./JobsTab";
+import PayTab from "./PayTab";
+import DashboardTab from "./DashboardTab";
+import AgentsTab from "./AgentsTab";
+import { SEPOLIA_RPC, CHAIN_ID, shortAddr } from "./config";
 
-// Sepolia RPC URL used for fhevmjs initialization
-const SEPOLIA_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
-
-const TOKEN_ADDRESS = "0x3864B98D1B1EC2109C679679052e2844b4153889"; // ConfidentialUSDC
-const VERIFIER_ADDRESS = "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83"; // X402PaymentVerifier
-const USDC_ADDRESS = "0xc89e913676B034f8b38E49f7508803d1cDEC9F4f"; // MockUSDC (V4.0 deploy)
-const CHAIN_ID = 11155111;
-const GATEWAY_URL = "https://gateway.sepolia.zama.ai";
-
-const TOKEN_ABI = [
-  "function wrap(address to, uint256 amount) external",
-  "function unwrap(address from, address to, bytes32 encryptedAmount, bytes calldata inputProof) external",
-  "function confidentialTransfer(address to, bytes32 encryptedAmount, bytes calldata inputProof) external returns (bytes32)",
-  "function confidentialBalanceOf(address account) external view returns (bytes32)",
-  "function paused() external view returns (bool)",
-  "function accumulatedFees() external view returns (uint256)",
-];
-
-const VERIFIER_ABI = [
-  "function recordPayment(address payer, address server, bytes32 nonce, uint64 minPrice) external",
-];
-
-const USDC_ABI = [
-  "function approve(address spender, uint256 amount) external returns (bool)",
-  "function balanceOf(address account) external view returns (uint256)",
-];
+// ── Types ───────────────────────────────────────────────────────────────────
 
 interface FhevmInstance {
   createEncryptedInput: (contractAddress: string, userAddress: string) => {
@@ -42,58 +18,33 @@ interface FhevmInstance {
   };
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    maxWidth: 600,
-    margin: "0 auto",
-    padding: "40px 20px",
-    minHeight: "100vh",
-  },
-  header: {
-    textAlign: "center",
-    marginBottom: 40,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 700,
-    color: "#fff",
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#888",
-  },
-  badge: {
-    display: "inline-block",
-    background: "#1a1a2e",
-    color: "#7b68ee",
-    padding: "4px 12px",
-    borderRadius: 12,
-    fontSize: 12,
-    marginTop: 8,
-  },
-  section: {
-    background: "#111",
-    borderRadius: 12,
-    padding: 24,
-    marginBottom: 16,
-    border: "1px solid #222",
-  },
-  status: {
-    padding: "12px 16px",
-    borderRadius: 8,
-    marginTop: 16,
-    fontSize: 13,
-    wordBreak: "break-all" as const,
-  },
-};
+interface TxRecord {
+  action: string;
+  txHash: string;
+  amount?: string;
+  timestamp: number;
+}
+
+type Tab = "wallet" | "pay" | "jobs" | "agents" | "dashboard";
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: "wallet", label: "Wallet" },
+  { key: "pay", label: "Pay API" },
+  { key: "jobs", label: "Jobs" },
+  { key: "agents", label: "Agents" },
+  { key: "dashboard", label: "Dashboard" },
+];
+
+// ════════════════════════════════════════════════════════════════════════════
 
 export default function App() {
   const [signer, setSigner] = useState<JsonRpcSigner | null>(null);
-  const [address, setAddress] = useState<string>("");
-  const [status, setStatus] = useState<string>("");
+  const [address, setAddress] = useState("");
+  const [tab, setTab] = useState<Tab>("wallet");
+  const [status, setStatus] = useState("");
   const [statusType, setStatusType] = useState<"info" | "error" | "success">("info");
-  const [txHistory, setTxHistory] = useState<Array<{action: string; txHash: string; amount?: string; timestamp: number}>>([]);
+  const [txHistory, setTxHistory] = useState<TxRecord[]>([]);
+  const [fhevmReady, setFhevmReady] = useState(false);
   const fhevmRef = useRef<FhevmInstance | null>(null);
   const fhevmInitPromise = useRef<Promise<FhevmInstance> | null>(null);
 
@@ -103,195 +54,295 @@ export default function App() {
   };
 
   const logTx = (action: string, txHash: string, amount?: string) => {
-    setTxHistory(prev => [{action, txHash, amount, timestamp: Date.now()}, ...prev].slice(0, 20));
+    setTxHistory((prev) => [{ action, txHash, amount, timestamp: Date.now() }, ...prev].slice(0, 50));
   };
 
-  const getFhevmInstance = async (): Promise<FhevmInstance> => {
+  const getFhevmInstance = async (ethereumProvider?: any): Promise<FhevmInstance> => {
     if (fhevmRef.current) return fhevmRef.current;
     if (!fhevmInitPromise.current) {
       fhevmInitPromise.current = (async () => {
-        await initFhevm();
-        const instance = await createInstance({
-          chainId: CHAIN_ID,
-          networkUrl: SEPOLIA_RPC,
-          gatewayUrl: GATEWAY_URL,
-        });
+        const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+          Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${label} timed out after ${ms / 1000}s`)), ms))]);
+
+        console.log("[FHE] initSDK starting...");
+        await withTimeout(initSDK({ tfheParams: "/tfhe_bg.wasm", kmsParams: "/kms_lib_bg.wasm", thread: 0 }), 30000, "initSDK");
+        console.log("[FHE] initSDK done, creating instance...");
+
+        const network = ethereumProvider || SEPOLIA_RPC;
+        const instance = await withTimeout(createInstance({ ...SepoliaConfig, network }), 30000, "createInstance");
+        console.log("[FHE] instance created!");
+
         fhevmRef.current = instance as unknown as FhevmInstance;
+        setFhevmReady(true);
         return fhevmRef.current;
       })();
     }
     return fhevmInitPromise.current;
   };
 
-  const getContracts = () => {
-    if (!signer) throw new Error("Wallet not connected");
-    const token = new Contract(TOKEN_ADDRESS, TOKEN_ABI, signer);
-    const verifier = new Contract(VERIFIER_ADDRESS, VERIFIER_ABI, signer);
-    const usdc = new Contract(USDC_ADDRESS, USDC_ABI, signer);
-    return { token, verifier, usdc };
-  };
-
   const onConnect = async () => {
-    if (!(window as any).ethereum) {
-      showStatus("MetaMask not found", "error");
+    const ethereum = (window as any).ethereum;
+    if (!ethereum) {
+      showStatus("MetaMask not found. Please install MetaMask.", "error");
       return;
     }
     try {
-      const provider = new BrowserProvider((window as any).ethereum);
+      const provider = new BrowserProvider(ethereum);
+      const network = await provider.getNetwork();
+      if (Number(network.chainId) !== CHAIN_ID) {
+        showStatus(`Switch to Sepolia (chainId ${CHAIN_ID})`, "error");
+        try {
+          await ethereum.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: "0x" + CHAIN_ID.toString(16) }],
+          });
+        } catch {
+          return;
+        }
+      }
       await provider.send("eth_requestAccounts", []);
       const s = await provider.getSigner();
       const addr = await s.getAddress();
       setSigner(s);
       setAddress(addr);
-      showStatus(`Connected: ${addr.slice(0, 6)}...${addr.slice(-4)}. Initializing FHE...`, "info");
+      showStatus(`Connected: ${shortAddr(addr)}. Initializing FHE engine...`, "info");
 
-      // Pre-initialize fhevmjs in the background
-      getFhevmInstance()
-        .then(() => showStatus(`Connected: ${addr.slice(0, 6)}...${addr.slice(-4)} | FHE ready`, "success"))
-        .catch((e) => showStatus(`Connected but FHE init failed: ${e.message}`, "error"));
+      getFhevmInstance(ethereum)
+        .then(() => showStatus(`Connected: ${shortAddr(addr)} | FHE ready`, "success"))
+        .catch((e) => showStatus(`Connected: ${shortAddr(addr)} | FHE init failed: ${e.message}`, "error"));
     } catch (e: any) {
       showStatus(e.message || "Connection failed", "error");
     }
   };
 
-  const onWrap = async (amount: string) => {
-    try {
-      showStatus("Approving USDC...", "info");
-      const { token, usdc } = getContracts();
-      const raw = BigInt(Math.round(parseFloat(amount) * 1_000_000));
-      const approveTx = await usdc.approve(TOKEN_ADDRESS, raw);
-      await approveTx.wait();
-
-      showStatus("Wrapping USDC to cUSDC...", "info");
-      const tx = await token.wrap(address, raw);
-      const receipt = await tx.wait();
-      showStatus(`Wrapped ${amount} USDC to cUSDC | TX: ${receipt.hash}`, "success");
-      logTx("Wrap", receipt.hash, amount);
-    } catch (e: any) {
-      showStatus(e.message || "Wrap failed", "error");
-    }
-  };
-
-  const onPay = async (to: string, amount: string) => {
-    try {
-      showStatus("Initializing FHE encryption...", "info");
-      const fhevm = await getFhevmInstance();
-      const { token, verifier } = getContracts();
-      const raw = BigInt(Math.round(parseFloat(amount) * 1_000_000));
-
-      showStatus("Encrypting payment amount...", "info");
-      const input = fhevm.createEncryptedInput(TOKEN_ADDRESS, address);
-      input.add64(raw);
-      const encrypted = await input.encrypt();
-
-      showStatus("Submitting encrypted transfer...", "info");
-      const tx = await token.confidentialTransfer(to, encrypted.handles[0], encrypted.inputProof);
-      const receipt = await tx.wait();
-
-      // Record payment nonce on verifier
-      const nonce = ethers.hexlify(ethers.randomBytes(32));
-      showStatus("Recording payment nonce...", "info");
-      const vTx = await verifier.recordPayment(address, to, nonce, raw);
-      await vTx.wait();
-
-      showStatus(`Paid ${amount} cUSDC to ${to.slice(0, 8)}... | TX: ${receipt.hash}`, "success");
-      logTx("Pay", receipt.hash, amount);
-    } catch (e: any) {
-      showStatus(e.message || "Payment failed", "error");
-    }
-  };
-
-  const onUnwrap = async (amount: string) => {
-    try {
-      showStatus("Initializing FHE encryption...", "info");
-      const fhevm = await getFhevmInstance();
-      const { token } = getContracts();
-      const raw = BigInt(Math.round(parseFloat(amount) * 1_000_000));
-
-      showStatus("Encrypting unwrap amount...", "info");
-      const input = fhevm.createEncryptedInput(TOKEN_ADDRESS, address);
-      input.add64(raw);
-      const encrypted = await input.encrypt();
-
-      showStatus("Requesting unwrap...", "info");
-      const tx = await token.unwrap(address, address, encrypted.handles[0], encrypted.inputProof);
-      const receipt = await tx.wait();
-      showStatus(`Unwrap requested for ${amount} cUSDC | TX: ${receipt.hash}. Awaiting KMS finalization.`, "success");
-      logTx("Unwrap Request", receipt.hash, amount);
-    } catch (e: any) {
-      showStatus(e.message || "Unwrap failed", "error");
-    }
-  };
-
-  const statusBg = statusType === "error" ? "#2a1515" : statusType === "success" ? "#152a15" : "#1a1a2e";
-  const statusColor = statusType === "error" ? "#ff6b6b" : statusType === "success" ? "#6bff6b" : "#7b68ee";
+  const statusBg =
+    statusType === "error" ? "rgba(239,68,68,0.1)" : statusType === "success" ? "rgba(16,185,129,0.1)" : "rgba(45,212,191,0.08)";
+  const statusColor = statusType === "error" ? "#EF4444" : statusType === "success" ? "#10B981" : "#2DD4BF";
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <div style={styles.title}>FHE x402 Demo</div>
-        <div style={styles.subtitle}>Encrypted USDC payments on Ethereum Sepolia (V4.0 Token-Centric)</div>
-        <div style={styles.badge}>fhe-confidential-v1</div>
+    <div style={S.page}>
+      {/* ── Hero ─────────────────────────────────────────────────── */}
+      <header style={S.hero}>
+        <div style={S.logoRow}>
+          <span style={S.logo}>FHE x402</span>
+          <span style={S.versionBadge}>V4.3</span>
+        </div>
+        <p style={S.tagline}>Confidential Payments for the AI Economy</p>
+        <div style={S.badgeRow}>
+          {["fhe-confidential-v1", "ERC-7984", "ERC-8183", "Zama fhEVM", "Sepolia"].map((b) => (
+            <span key={b} style={S.badge}>{b}</span>
+          ))}
+        </div>
+        <p style={S.desc}>
+          AI agents pay for APIs with FHE-encrypted amounts. Balances stay private on-chain.
+          Built on Zama fhEVM coprocessor + x402 HTTP payment standard.
+        </p>
+      </header>
+
+      {/* ── Connect ──────────────────────────────────────────────── */}
+      <div style={S.connectCard}>
+        {signer ? (
+          <div style={S.connectedRow}>
+            <span style={S.dot} />
+            <span style={{ color: "#fff", fontSize: 13, fontFamily: "'JetBrains Mono', monospace" }}>
+              {shortAddr(address)}
+            </span>
+            <span style={{ color: fhevmReady ? "#10B981" : "#F59E0B", fontSize: 11, marginLeft: "auto" }}>
+              {fhevmReady ? "FHE Ready" : "FHE Loading..."}
+            </span>
+          </div>
+        ) : (
+          <button onClick={onConnect} style={S.connectBtn}>Connect Wallet</button>
+        )}
       </div>
 
-      <div style={styles.section}>
-        <ConnectWallet address={address} onConnect={onConnect} />
-      </div>
-
+      {/* ── Tabs ─────────────────────────────────────────────────── */}
       {signer && (
         <>
-          <div style={styles.section}>
-            <BalanceDisplay address={address} signer={signer} usdcAddress={USDC_ADDRESS} tokenAddress={TOKEN_ADDRESS} />
-          </div>
+          <nav style={S.nav}>
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                onClick={() => setTab(t.key)}
+                style={tab === t.key ? S.tabActive : S.tabInactive}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
 
-          <div style={styles.section}>
-            <WrapForm onWrap={onWrap} />
-          </div>
-
-          <div style={styles.section}>
-            <PayForm onPay={onPay} />
-          </div>
-
-          <div style={styles.section}>
-            <UnwrapForm onUnwrap={onUnwrap} />
-          </div>
-
-          {txHistory.length > 0 && (
-            <div style={styles.section}>
-              <h3 style={{color: '#fff', margin: '0 0 12px 0', fontSize: 16}}>Transaction History</h3>
-              {txHistory.map((tx, i) => (
-                <div key={i} style={{
-                  padding: '8px 0',
-                  borderBottom: i < txHistory.length - 1 ? '1px solid #222' : 'none',
-                  fontSize: 12,
-                  color: '#aaa',
-                }}>
-                  <span style={{color: '#7b68ee', fontWeight: 600}}>{tx.action}</span>
-                  {tx.amount && <span> — {tx.amount} USDC</span>}
-                  <br />
-                  <a
-                    href={`https://sepolia.etherscan.io/tx/${tx.txHash}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{color: '#4a90d9', textDecoration: 'none', fontSize: 11}}
-                  >
-                    {tx.txHash.slice(0, 10)}...{tx.txHash.slice(-8)}
-                  </a>
-                  <span style={{float: 'right', fontSize: 11}}>
-                    {new Date(tx.timestamp).toLocaleTimeString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+          <main className="fade-in" style={{ paddingBottom: status ? 56 : 16 }}>
+            {tab === "wallet" && (
+              <WalletTab signer={signer} address={address} onStatus={showStatus} onTx={logTx} fhevm={fhevmRef.current} txHistory={txHistory} />
+            )}
+            {tab === "pay" && (
+              <PayTab signer={signer} address={address} onStatus={showStatus} onTx={logTx} fhevm={fhevmRef.current} />
+            )}
+            {tab === "jobs" && (
+              <JobsTab signer={signer} address={address} onStatus={showStatus} onTx={logTx} />
+            )}
+            {tab === "agents" && (
+              <AgentsTab signer={signer} address={address} onStatus={showStatus} onTx={logTx} />
+            )}
+            {tab === "dashboard" && (
+              <DashboardTab signer={signer} address={address} txHistory={txHistory} />
+            )}
+          </main>
         </>
       )}
 
+      {/* ── Status ───────────────────────────────────────────────── */}
       {status && (
-        <div style={{ ...styles.status, background: statusBg, color: statusColor }}>
+        <div style={{ ...S.statusBar, background: statusBg, color: statusColor, borderTop: `1px solid ${statusColor}22` }}>
           {status}
         </div>
       )}
+
+      {/* ── Footer ───────────────────────────────────────────────── */}
+      <footer style={S.footer}>
+        <span>FHE x402 Protocol</span>
+        <span style={{ color: "#2a2a2a" }}>|</span>
+        <span>Powered by Zama fhEVM</span>
+        <span style={{ color: "#2a2a2a" }}>|</span>
+        <a href="https://github.com/Himess/fhe-x402" target="_blank" rel="noopener noreferrer" style={{ color: "#2DD4BF", textDecoration: "none" }}>
+          GitHub
+        </a>
+      </footer>
     </div>
   );
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Styles — Pendex-inspired theme
+// ════════════════════════════════════════════════════════════════════════════
+
+const GOLD = "#2DD4BF";
+const BG = "#0A0A0B";
+const CARD = "#141414";
+const BORDER = "#2a2a2a";
+
+const S: Record<string, React.CSSProperties> = {
+  page: {
+    maxWidth: 720,
+    margin: "0 auto",
+    padding: "0 20px",
+    minHeight: "100vh",
+    display: "flex",
+    flexDirection: "column",
+  },
+  hero: { textAlign: "center", padding: "48px 0 28px" },
+  logoRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10 },
+  logo: {
+    fontSize: 36,
+    fontWeight: 800,
+    background: `linear-gradient(135deg, ${GOLD}, #14B8A6)`,
+    WebkitBackgroundClip: "text",
+    WebkitTextFillColor: "transparent",
+    letterSpacing: -1,
+  },
+  versionBadge: {
+    background: `${GOLD}18`,
+    color: GOLD,
+    padding: "3px 10px",
+    borderRadius: 6,
+    fontSize: 11,
+    fontWeight: 600,
+    border: `1px solid ${GOLD}30`,
+  },
+  tagline: { fontSize: 15, color: "#A0A0A0", marginTop: 8, fontWeight: 500 },
+  badgeRow: { display: "flex", justifyContent: "center", gap: 6, marginTop: 16, flexWrap: "wrap" as const },
+  badge: {
+    background: CARD,
+    color: "#A0A0A0",
+    padding: "4px 12px",
+    borderRadius: 20,
+    fontSize: 10,
+    border: `1px solid ${BORDER}`,
+    fontWeight: 500,
+    letterSpacing: 0.3,
+  },
+  desc: { color: "#6B7280", fontSize: 12, maxWidth: 500, margin: "14px auto 0", lineHeight: 1.6 },
+
+  // Connect
+  connectCard: {
+    background: CARD,
+    borderRadius: 12,
+    padding: "14px 20px",
+    border: `1px solid ${BORDER}`,
+    marginBottom: 12,
+  },
+  connectBtn: {
+    background: `linear-gradient(135deg, ${GOLD}, #14B8A6)`,
+    color: BG,
+    border: "none",
+    borderRadius: 10,
+    padding: "13px 32px",
+    fontWeight: 700,
+    cursor: "pointer",
+    fontSize: 14,
+    width: "100%",
+    boxShadow: `0 0 20px rgba(45,212,191,0.25)`,
+  },
+  connectedRow: { display: "flex", alignItems: "center", gap: 10 },
+  dot: { width: 8, height: 8, borderRadius: "50%", background: "#10B981", display: "inline-block", boxShadow: "0 0 6px rgba(16,185,129,0.5)" },
+
+  // Nav
+  nav: {
+    display: "flex",
+    gap: 2,
+    background: BG,
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 16,
+    border: `1px solid ${BORDER}`,
+  },
+  tabActive: {
+    flex: 1,
+    background: GOLD,
+    color: BG,
+    border: "none",
+    borderRadius: 8,
+    padding: "10px 0",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 700,
+  },
+  tabInactive: {
+    flex: 1,
+    background: "transparent",
+    color: "#6B7280",
+    border: "none",
+    borderRadius: 8,
+    padding: "10px 0",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 500,
+  },
+
+  // Status
+  statusBar: {
+    position: "fixed" as const,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    padding: "12px 20px",
+    fontSize: 12,
+    textAlign: "center" as const,
+    wordBreak: "break-all" as const,
+    zIndex: 100,
+    fontFamily: "'JetBrains Mono', monospace",
+    backdropFilter: "blur(12px)",
+  },
+
+  // Footer
+  footer: {
+    textAlign: "center" as const,
+    padding: "28px 0",
+    fontSize: 11,
+    color: "#3a3a3a",
+    display: "flex",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: "auto",
+  },
+};

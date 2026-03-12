@@ -242,8 +242,8 @@ ETHERSCAN_API_KEY=647E2J... (COMPROMISED)
 
 **Kontrat adresleri (tum dokumanlarda tutarli):**
 - MockUSDC: `0xc89e913676B034f8b38E49f7508803d1cDEC9F4f` ✅
-- ConfidentialUSDC: `0x3864B98D1B1EC2109C679679052e2844b4153889` ✅
-- X402PaymentVerifier: `0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83` ✅ (V4.3 redeployed)
+- ConfidentialUSDC: `0xE944754aa70d4924dc5d8E57774CDf21Df5e592D` ✅
+- X402PaymentVerifier: `0x4503A7aee235aBD10e6064BBa8E14235fdF041f4` ✅ (V4.3 redeployed)
 - Treasury: `0xF505e2E71df58D7244189072008f25f6b6aaE5ae` ✅
 
 ---

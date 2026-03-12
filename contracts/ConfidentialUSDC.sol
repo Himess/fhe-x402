@@ -69,6 +69,10 @@ contract ConfidentialUSDC is
         // L-1: Ensure underlying token has 6 decimals (USDC standard)
         if (IERC20Metadata(address(_usdc)).decimals() != 6) revert InvalidDecimals();
         treasury = _treasury;
+        // M-1: Assert rate is 1 (USDC standard). This ensures fee math is correct.
+        // rate() returns the conversion factor from underlying to wrapper token.
+        // For USDC (6 decimals → 6 decimals), rate must be 1.
+        if (rate() != 1) revert InvalidDecimals();
         emit TreasuryUpdated(address(0), _treasury);
     }
 
@@ -180,14 +184,20 @@ contract ConfidentialUSDC is
         transferred = _transfer(msg.sender, to, value);
 
         // Call the IERC7984Receiver callback on recipient (ERC-7984 standard)
+        // Allow the transferred amount handle for the recipient so the callback
+        // can access the encrypted amount (FHE ACL requirement for cross-contract handles)
         if (to.code.length > 0) {
+            FHE.allowTransient(transferred, to);
             try IERC7984Receiver(to).onConfidentialTransferReceived(
                 msg.sender, // operator
                 msg.sender, // from
                 transferred,
                 data
             ) returns (ebool accepted) {
-                // Store accepted flag — receiver signals acceptance via encrypted bool
+                // L-7: The accepted ebool is stored per ERC-7984 spec compliance.
+                // The transfer has already completed; the callback merely signals
+                // the receiver's acceptance for event/logging purposes.
+                // Future versions may use this to implement conditional transfers.
                 FHE.allowTransient(accepted, address(this));
             } catch {
                 revert TransferCallbackFailed();

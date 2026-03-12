@@ -7,10 +7,10 @@ import { parseArgs } from "node:util";
 // Constants
 // ============================================================================
 
-const DEFAULT_TOKEN = "0x3864B98D1B1EC2109C679679052e2844b4153889";
-const DEFAULT_VERIFIER = "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83";
+const DEFAULT_TOKEN = "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D";
+const DEFAULT_VERIFIER = "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4";
 const DEFAULT_USDC = "0xc89e913676B034f8b38E49f7508803d1cDEC9F4f";
-const DEFAULT_GATEWAY = "https://gateway.sepolia.zama.ai";
+const DEFAULT_RELAYER = "https://relayer.testnet.zama.org";
 
 const USDC_ABI = [
   "function approve(address spender, uint256 amount) external returns (bool)",
@@ -45,13 +45,11 @@ async function initContracts(): Promise<void> {
   verifier = new Contract(verifierAddr, VERIFIER_ABI, signer);
   usdc = new Contract(usdcAddr, USDC_ABI, signer);
 
-  // Initialize fhevmjs for FHE encryption
-  const fhevmjs = await import("fhevmjs");
-  await fhevmjs.initFhevm();
-  fhevmInstance = await fhevmjs.createInstance({
-    chainId: parseInt(process.env.CHAIN_ID || "11155111"),
-    networkUrl: rpc,
-    gatewayUrl: process.env.GATEWAY_URL || DEFAULT_GATEWAY,
+  // Initialize @zama-fhe/relayer-sdk for FHE encryption (use /node subpath)
+  const { createInstance, SepoliaConfig } = await import("@zama-fhe/relayer-sdk/node");
+  fhevmInstance = await createInstance({
+    ...SepoliaConfig,
+    network: rpc,
   });
 }
 

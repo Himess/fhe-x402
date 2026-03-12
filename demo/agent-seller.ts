@@ -8,7 +8,8 @@
 import { fhePaywall } from "fhe-x402-sdk";
 
 const PORT = parseInt(process.env.PORT || "3001", 10);
-const POOL_ADDRESS = "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73";
+const TOKEN_ADDRESS = "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D"; // ConfidentialUSDC
+const VERIFIER_ADDRESS = "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4"; // X402PaymentVerifier
 const RPC_URL = process.env.RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
 const RECIPIENT = process.env.RECIPIENT_ADDRESS || "0xF505e2E71df58D7244189072008f25f6b6aaE5ae";
 
@@ -19,7 +20,8 @@ async function main() {
   const app = express();
 
   console.log(`[Seller] Starting FHE x402 API server...`);
-  console.log(`[Seller] Pool: ${POOL_ADDRESS}`);
+  console.log(`[Seller] Token: ${TOKEN_ADDRESS}`);
+  console.log(`[Seller] Verifier: ${VERIFIER_ADDRESS}`);
   console.log(`[Seller] Recipient: ${RECIPIENT}`);
   console.log(`[Seller] RPC: ${RPC_URL}`);
   console.log();
@@ -38,7 +40,8 @@ async function main() {
     fhePaywall({
       price: "1000000", // 1 USDC
       asset: "USDC",
-      poolAddress: POOL_ADDRESS,
+      tokenAddress: TOKEN_ADDRESS,
+      verifierAddress: VERIFIER_ADDRESS,
       recipientAddress: RECIPIENT,
       rpcUrl: RPC_URL,
       chainId: 11155111,

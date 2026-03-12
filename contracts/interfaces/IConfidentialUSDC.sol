@@ -26,6 +26,7 @@ interface IConfidentialUSDC {
     error UnwrapAlreadyRequested();
     error TransferCallbackFailed();
     error SelfTransfer();
+    // NOTE: InvalidUnwrapRequest(euint64) is inherited from ERC7984ERC20Wrapper
 
     // ═══════════════════════════════════════
     // ADMIN

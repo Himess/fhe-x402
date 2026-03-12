@@ -6,7 +6,7 @@
  */
 import { ethers } from "hardhat";
 
-const CONFIDENTIAL_USDC = "0x3864B98D1B1EC2109C679679052e2844b4153889";
+const CONFIDENTIAL_USDC = "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D";
 
 async function main() {
   const [deployer] = await ethers.getSigners();

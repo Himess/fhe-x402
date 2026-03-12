@@ -16,8 +16,8 @@ import { ethers } from "hardhat";
 import type { Contract, Signer } from "ethers";
 
 const MOCK_USDC = "0xc89e913676B034f8b38E49f7508803d1cDEC9F4f";
-const CUSDC = "0x3864B98D1B1EC2109C679679052e2844b4153889";
-const VERIFIER = "0xCc60280A10FEB7fBdf20fBefc2abe6E0e99A5A83";
+const CUSDC = "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D";
+const VERIFIER = "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4";
 
 const USDC_ABI = [
   "function balanceOf(address) view returns (uint256)",

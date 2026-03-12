@@ -6,13 +6,13 @@
  */
 
 import { JsonRpcProvider, Wallet } from "ethers";
-import { initFhevm, createInstance } from "fhevmjs";
+import { createInstance, SepoliaConfig } from "@zama-fhe/relayer-sdk";
 import { fheFetch } from "fhe-x402-sdk";
 
 const API_URL = process.env.API_URL || "http://localhost:3001/api/premium/data";
 const RPC_URL = process.env.RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
-const POOL_ADDRESS = "0xfF87ec6cb07D8Aa26ABc81037e353A28c7752d73";
-const GATEWAY_URL = "https://gateway.sepolia.zama.ai";
+const TOKEN_ADDRESS = "0xE944754aa70d4924dc5d8E57774CDf21Df5e592D"; // ConfidentialUSDC
+const VERIFIER_ADDRESS = "0x4503A7aee235aBD10e6064BBa8E14235fdF041f4"; // X402PaymentVerifier
 
 async function main() {
   const privateKey = process.env.PRIVATE_KEY;
@@ -27,25 +27,25 @@ async function main() {
 
   console.log(`[Buyer] Agent address: ${address}`);
   console.log(`[Buyer] Target API: ${API_URL}`);
-  console.log(`[Buyer] Pool: ${POOL_ADDRESS}`);
+  console.log(`[Buyer] Token: ${TOKEN_ADDRESS}`);
+  console.log(`[Buyer] Verifier: ${VERIFIER_ADDRESS}`);
   console.log();
 
-  // Initialize fhevmjs for real FHE encryption
-  console.log("[Buyer] Initializing fhevmjs (TFHE WASM)...");
-  await initFhevm();
+  // Initialize @zama-fhe/relayer-sdk for real FHE encryption
+  console.log("[Buyer] Initializing relayer-sdk (TFHE WASM)...");
   const fhevmInstance = await createInstance({
-    chainId: 11155111,
-    networkUrl: RPC_URL,
-    gatewayUrl: GATEWAY_URL,
+    ...SepoliaConfig,
+    network: RPC_URL,
   });
-  console.log("[Buyer] fhevmjs ready.");
+  console.log("[Buyer] relayer-sdk ready.");
   console.log();
 
   console.log("[Buyer] Fetching API data with auto-402 payment...");
 
   try {
     const response = await fheFetch(API_URL, {
-      poolAddress: POOL_ADDRESS,
+      tokenAddress: TOKEN_ADDRESS,
+      verifierAddress: VERIFIER_ADDRESS,
       rpcUrl: RPC_URL,
       signer,
       fhevmInstance: fhevmInstance as any,

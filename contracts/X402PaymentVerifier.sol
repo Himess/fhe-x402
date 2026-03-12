@@ -56,6 +56,9 @@ contract X402PaymentVerifier is ZamaEthereumConfig, IERC7984Receiver {
     /// @notice Caller is not the trusted token contract
     error UntrustedCaller();
 
+    /// @notice minPrice must be > 0
+    error ZeroMinPrice();
+
     // ═══════════════════════════════════════
     // CONSTRUCTOR
     // ═══════════════════════════════════════
@@ -75,6 +78,7 @@ contract X402PaymentVerifier is ZamaEthereumConfig, IERC7984Receiver {
     /// @param minPrice Minimum price committed to (6 decimals, e.g. 1000000 = 1 USDC)
     function recordPayment(address server, bytes32 nonce, uint64 minPrice) external {
         if (usedNonces[nonce]) revert NonceAlreadyUsed();
+        if (minPrice == 0) revert ZeroMinPrice();
         usedNonces[nonce] = true;
         emit PaymentVerified(msg.sender, server, nonce, minPrice);
     }
@@ -101,6 +105,7 @@ contract X402PaymentVerifier is ZamaEthereumConfig, IERC7984Receiver {
         bytes calldata inputProof
     ) external {
         if (usedNonces[nonce]) revert NonceAlreadyUsed();
+        if (minPrice == 0) revert ZeroMinPrice();
         usedNonces[nonce] = true;
 
         // Call confidentialTransferFrom on the ERC-7984 token.
@@ -159,6 +164,7 @@ contract X402PaymentVerifier is ZamaEthereumConfig, IERC7984Receiver {
         if (msg.sender != trustedToken) revert UntrustedCaller();
         (address server, bytes32 nonce, uint64 minPrice) = abi.decode(data, (address, bytes32, uint64));
         if (usedNonces[nonce]) revert NonceAlreadyUsed();
+        if (minPrice == 0) revert ZeroMinPrice();
         usedNonces[nonce] = true;
         emit PaymentVerified(from, server, nonce, minPrice);
         return FHE.asEbool(true);

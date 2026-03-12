@@ -23,7 +23,7 @@ const TOKEN_EVENT_ABI = [
 ];
 
 const VERIFIER_EVENT_ABI = [
-  "event PaymentVerified(address indexed payer, address indexed server, bytes32 indexed nonce)",
+  "event PaymentVerified(address indexed payer, address indexed server, bytes32 indexed nonce, uint64 minPrice)",
 ];
 
 /**
@@ -44,6 +44,18 @@ export async function createFacilitatorServer(config: FacilitatorConfig): Promis
   const express = expressModule.default ?? expressModule;
   const app = express();
   app.use(express.json({ limit: "100kb" }));
+
+  // CORS headers for cross-origin requests
+  app.use((_req: any, res: any, nextFn: any) => {
+    const setH = res.setHeader?.bind(res) ?? res.set?.bind(res) ?? res.header?.bind(res);
+    if (setH) {
+      setH("Access-Control-Allow-Origin", "*");
+      setH("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      setH("Access-Control-Allow-Headers", "Content-Type, Authorization, X-FHE-x402-API-Key");
+    }
+    if (_req.method === "OPTIONS") return res.status(204).end();
+    nextFn();
+  });
 
   const chainId = config.chainId ?? 11155111;
   const network = `eip155:${chainId}`;
@@ -76,12 +88,25 @@ export async function createFacilitatorServer(config: FacilitatorConfig): Promis
     return _provider;
   }
 
+  // Simple rate limiter
+  const verifyRateLimit = new Map<string, { count: number; resetAt: number }>();
+  function checkVerifyRateLimit(ip: string): boolean {
+    const now = Date.now();
+    const entry = verifyRateLimit.get(ip);
+    if (!entry || now > entry.resetAt) {
+      verifyRateLimit.set(ip, { count: 1, resetAt: now + 60000 });
+      return true;
+    }
+    entry.count++;
+    return entry.count <= 30;
+  }
+
   // === x402 Standard Endpoints ===
 
   app.get("/info", (_req: any, res: any) => {
     res.json({
       name: config.name || "FHE x402 Facilitator",
-      version: config.version || "4.0.0",
+      version: config.version || "4.3.0",
       schemes: ["fhe-confidential-v1"],
       networks: [network],
       tokens: ["USDC"],
@@ -99,6 +124,11 @@ export async function createFacilitatorServer(config: FacilitatorConfig): Promis
   // /verify — verify ConfidentialTransfer + PaymentVerified events on-chain
   app.post("/verify", async (req: any, res: any) => {
     try {
+      const clientIp = req.socket?.remoteAddress ?? "unknown";
+      if (!checkVerifyRateLimit(clientIp)) {
+        return res.status(429).json({ valid: false, error: "Too many requests" });
+      }
+
       const { x402Version, scheme, network: reqNetwork, payload } = req.body;
 
       if (scheme !== "fhe-confidential-v1") {

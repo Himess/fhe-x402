@@ -5,5 +5,15 @@ export default defineConfig({
   plugins: [react()],
   build: {
     outDir: "dist",
+    target: "esnext",
+  },
+  optimizeDeps: {
+    exclude: ["@zama-fhe/relayer-sdk"],
+  },
+  server: {
+    headers: {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "credentialless",
+    },
   },
 });
